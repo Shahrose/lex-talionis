@@ -56,7 +56,7 @@ class HealthBar(object):
 
             # Blit health bars -- Must be blit every frame
             if self.unit.stats['HP']:
-                fraction_hp = float(self.true_hp)/self.unit.stats['HP']
+                fraction_hp = min(float(self.true_hp)/self.unit.stats['HP'], 1)
             else:
                 fraction_hp = 0
             index_pixel = int(50*fraction_hp)
@@ -248,20 +248,16 @@ class HealthBar(object):
             if stats:
                 self.stats = stats
 
-            team_dict = {'player': 'Blue',
-                         'enemy': 'Red',
-                         'enemy2': 'Purple',
-                         'other': 'Green'}
-
             from . import UnitObject
             team = 'enemy' if not isinstance(unit, UnitObject.UnitObject) else unit.team
-            self.bg_surf = GC.IMAGESDICT[team_dict[team] + 'Health']
-            self.c_surf = GC.IMAGESDICT[team_dict[team] + 'CombatStats']
-            self.gem = GC.IMAGESDICT[team_dict[team] + 'CombatGem'] 
+            color = Utility.get_color(team)
+            self.bg_surf = GC.IMAGESDICT[color + 'Health']
+            self.c_surf = GC.IMAGESDICT[color + 'CombatStats']
+            self.gem = GC.IMAGESDICT[color + 'CombatGem'] 
 
             # Swaps combat stat color
             if force_stats:
-                self.c_surf = GC.IMAGESDICT[team_dict[force_stats] + 'CombatStats']
+                self.c_surf = GC.IMAGESDICT[color + 'CombatStats']
         else:
             self.reset()
 

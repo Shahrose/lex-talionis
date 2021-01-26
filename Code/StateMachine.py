@@ -45,6 +45,8 @@ class StateMachine(object):
                            'steal': GeneralStates.StealState,
                            'repair': GeneralStates.RepairState,
                            'arena': GeneralStates.ArenaState,
+                           'arena_base': GeneralStates.ArenaState,
+                           'title_dialogue': Transitions.TitleDialogue,
                            'dialogue': GeneralStates.DialogueState,
                            'transparent_dialogue': GeneralStates.DialogueState,
                            'victory': GeneralStates.VictoryState,
@@ -75,6 +77,7 @@ class StateMachine(object):
                            'prep_items': PrepBase.PrepItemsState,
                            'prep_items_choices': PrepBase.PrepItemsChoicesState,
                            'prep_transfer': PrepBase.PrepTransferState,
+                           'convoy_transfer': PrepBase.ConvoyTransferState,
                            'prep_list': PrepBase.PrepListState,
                            'prep_trade_select': PrepBase.PrepTradeSelectState,
                            'prep_trade': PrepBase.PrepTradeState,
@@ -89,6 +92,7 @@ class StateMachine(object):
                            'base_records': PrepBase.BaseRecordsState,
                            'base_armory_pick': PrepBase.PrepItemsState,
                            'base_market': PrepBase.BaseMarketState,
+                           'base_arena_choice': PrepBase.BaseArenaState,
                            'start_start': Transitions.StartStart,
                            'start_option': Transitions.StartOption,
                            'start_load': Transitions.StartLoad,
@@ -113,6 +117,7 @@ class StateMachine(object):
                            'info_menu': InfoMenu.InfoMenu,
                            'unit_menu': UnitMenu.UnitMenu,
                            'turnwheel': Turnwheel.TurnwheelState,
+                           'force_turnwheel': Turnwheel.TurnwheelState,
                            'overworld': Overworld.OverworldState,
                            'overworld_effects': Overworld.OverworldEffectsState,
                            'overworld_options': Overworld.OverworldOptionsState,
@@ -152,6 +157,9 @@ class StateMachine(object):
 
     def clear(self):
         self.temp_state.append('clear')
+
+    def hard_clear(self):
+        self.state = [self.state[-1]]
 
     def getState(self):
         if self.state:

@@ -1,7 +1,9 @@
 # Autotile maker part 2
-import os, sys, time
+import os, sys
 from collections import Counter, OrderedDict
-from PyQt4 import QtGui, QtCore
+from functools import reduce
+from PyQt5.QtWidgets import QProgressDialog
+from PyQt5.QtCore import QTimer
 from PIL import Image
 
 sys.path.append('../')
@@ -28,7 +30,7 @@ def similar_slow(p1, p2):
     return sum(i != j for i, j in zip(diff(p1), diff(p2)))
 
 def transpose_sorted(p):
-    return [y for x, y in sorted(zip(range(WIDTH*WIDTH), p), key=lambda (x, y): x%WIDTH)]
+    return [y for x, y in sorted(zip(range(WIDTH*WIDTH), p), key=lambda t: t[0]%WIDTH)]
 
 def transpose_lc(p):
     return [p[i*WIDTH + j] for j in range(WIDTH) for i in range(WIDTH)]
@@ -168,7 +170,7 @@ def color_change_band(map_tiles, autotile_frames, closest_book, closest_series,
         new = Image.new('RGB', (WIDTH, HEIGHT))
         for index, color in enumerate(closest_series.series[band].colors):
             new_color = color_conversion_dict.get(color, (8, 8, 8))
-            new.putpixel((index%WIDTH, index/HEIGHT), new_color)
+            new.putpixel((index%WIDTH, index//HEIGHT), new_color)
         # Now fix any that are black -- do it twice
         # new = remove_bad_color(remove_bad_color(new))
         autotile_frames[band].paste(new, (x*WIDTH, y*HEIGHT))
@@ -187,7 +189,7 @@ class AutotileMaker(object):
 
         # Set up progress Dialog
         msg = "Generating Autotiles..."
-        self.progress_dlg = QtGui.QProgressDialog(msg, "Cancel", 0, 100, window)
+        self.progress_dlg = QProgressDialog(msg, "Cancel", 0, 100, window)
         self.progress_dlg.setAutoClose(True)
         self.progress_dlg.setWindowTitle(msg)
         self.progress_dlg.canceled.connect(self.cancel)
@@ -195,7 +197,7 @@ class AutotileMaker(object):
         self.progress_dlg.setValue(0)
 
         # === Timing ===
-        self.main_timer = QtCore.QTimer()
+        self.main_timer = QTimer()
         self.main_timer.timeout.connect(self.tick)
         self.main_timer.start(1)  # 120 FPS
 
@@ -248,8 +250,8 @@ class AutotileMaker(object):
         elif self.state == 3:
             print('Comparison...')
             self.map_tiles = OrderedDict()
-            for x in range(self.map_sprite.size[0]/WIDTH):
-                for y in range(self.map_sprite.size[1]/HEIGHT):
+            for x in range(self.map_sprite.size[0] // WIDTH):
+                for y in range(self.map_sprite.size[1] // HEIGHT):
                     tile = self.map_sprite.crop((x*WIDTH, y*HEIGHT, x*WIDTH + WIDTH, y*HEIGHT + HEIGHT))
                     tile_palette = PaletteData(tile)
                     self.map_tiles[(x, y)] = tile_palette
@@ -290,9 +292,9 @@ class AutotileMaker(object):
         # Each autotile template becomes a book
         # A book contains a dictionary of positions as keys and series as values
         image = Image.open('AutotileTemplates/' + fn)
-        width = image.size[0]/16  # There are 16 frames 
-        num_tiles_x = width/WIDTH
-        num_tiles_y = image.size[1]/HEIGHT
+        width = image.size[0] // 16  # There are 16 frames 
+        num_tiles_x = width // WIDTH
+        num_tiles_y = image.size[1] // HEIGHT
         number = num_tiles_x*num_tiles_y
         minitiles = [Series() for _ in range(number)]
         for frame in range(16):  # There are 16 frames, stacked horizontally with one another

@@ -1,12 +1,13 @@
-#! usr/bin/env python2.7
+import pygame.locals # contains all the constants needed for keys.
 from collections import OrderedDict
 import os
+
 def read_config_file():
     lines = OrderedDict([('debug', 1),
                          ('cheat', 1),
                          ('random_seed', -1),
                          ('Screen Size', 2),
-                         ('Sound Buffer Size', 4),
+                         ('Sound Buffer Size', 2),
                          ('Animation', 'Always'),
                          ('Unit Speed', 120),
                          ('Text Speed', 10),
@@ -21,15 +22,15 @@ def read_config_file():
                          ('Display Hints', 1),
                          ('HP Map Team', 'All'),
                          ('HP Map Cull', 'All'),
-                         ('key_SELECT', 120),
-                         ('key_BACK', 122),
-                         ('key_INFO', 99),
-                         ('key_AUX', 97),
-                         ('key_LEFT', 276),
-                         ('key_RIGHT', 275),
-                         ('key_UP', 273),
-                         ('key_DOWN', 274),
-                         ('key_START', 115)])
+                         ('key_SELECT', 'K_x'),
+                         ('key_BACK', 'K_z'),
+                         ('key_INFO', 'K_c'),
+                         ('key_AUX', 'K_a'),
+                         ('key_LEFT', 'K_LEFT'),
+                         ('key_RIGHT', 'K_RIGHT'),
+                         ('key_UP', 'K_UP'),
+                         ('key_DOWN', 'K_DOWN'),
+                         ('key_START', 'K_s')])
 
     def parse_config(fn):
         with open(fn) as config_file:
@@ -44,31 +45,17 @@ def read_config_file():
         if os.path.exists('Data/config.ini'):
             parse_config('Data/config.ini')
 
-    lines['debug'] = int(lines['debug'])
-    lines['cheat'] = int(lines['cheat'])
-    lines['random_seed'] = int(lines['random_seed'])
-    lines['Screen Size'] = int(lines['Screen Size'])
-    lines['Sound Buffer Size'] = int(lines['Sound Buffer Size'])
-    lines['Unit Speed'] = int(lines['Unit Speed'])
-    lines['Text Speed'] = int(lines['Text Speed'])
-    lines['Cursor Speed'] = int(lines['Cursor Speed'])
-    lines['Show Terrain'] = int(lines['Show Terrain'])
-    lines['Show Objective'] = int(lines['Show Objective'])
-    lines['Autocursor'] = int(lines['Autocursor'])
-    lines['Music Volume'] = float(lines['Music Volume'])
-    lines['Sound Volume'] = float(lines['Sound Volume'])
-    lines['Autoend Turn'] = int(lines['Autoend Turn'])
-    lines['Confirm End'] = int(lines['Confirm End'])
-    lines['Display Hints'] = int(lines['Display Hints'])
-    lines['key_SELECT'] = int(lines['key_SELECT'])
-    lines['key_BACK'] = int(lines['key_BACK'])
-    lines['key_INFO'] = int(lines['key_INFO'])
-    lines['key_AUX'] = int(lines['key_AUX'])
-    lines['key_LEFT'] = int(lines['key_LEFT'])
-    lines['key_RIGHT'] = int(lines['key_RIGHT'])
-    lines['key_UP'] = int(lines['key_UP'])
-    lines['key_DOWN'] = int(lines['key_DOWN'])
-    lines['key_START'] = int(lines['key_START'])
+    # Go through the dict and cast any numbers to int/floats
+    for setting, value in lines.items():
+        try: # check if it's an integer or float.
+            float(value)
+            if '.' in str(value): # it's a decimal number.
+                lines[setting] = float(value)
+            else:
+                lines[setting] = int(value)
+        except: # else; must be a string
+            if value.startswith('K_'): # assume pygame key constant
+                lines[setting] = getattr(pygame.locals, value)
 
     return lines
 
@@ -80,10 +67,10 @@ def write_config_file():
 def read_constants_file():
     lines = {'max_items': 5, # How many items can a unit carry at maximum
              'speed_to_double': 4, # How much AS is needed to double
-             'max_promotions': 10, # Allowed number of promotion options for a unit
              'crit': 3, # 0 - No critting, 1 - 2x damage minus 1x defense, 2 - 2x damage minus 2x defense, 3 - 3x damage minus 3x defense
              'turnwheel': 0, # Whether to use the turnwheel
              'overworld': 0, # Whether to have an overworld
+             'fatigue': 0, # 0 -- No fatigue, 1 -- Fatigue for participating in combat, 2 -- Fatigue whenever attack (even when defending), 3 -- Fatigue by 1 each turn
              'flying_mcost_column': 6, # What column flying units should use in mcost.txt (0 indexed)
              'fleet_mcost_column': 7, # What column units with fleet_of_foot should use in mcost.txt (0 indexed)
              'exp_curve': 2.3, # How linear the exp curve is. Higher = less linear
@@ -91,7 +78,7 @@ def read_constants_file():
              'exp_offset': 0, # The exp curve indirectly keeps the player characters near the enemy's level + 0. Change this to change the "+0"
              'status_exp': 15, # How much exp is gotten for using a status spell
              'heal_curve': 1.0, # How much to multiply the amount healed by
-             'heal_magnitude': 7, # Added to total amount healed 
+             'heal_magnitude': 7, # Added to total amount healed
              'heal_min': 5, # Minimum amount gained for healing
              'kill_multiplier': 2.5, # Normal exp is multiplied by this when you get a kill (Normal FE = 3.0)
              'boss_bonus': 40, # Added to total exp on killing a boss
@@ -106,16 +93,19 @@ def read_constants_file():
              'rng': 'true_hit',
              'set_roll': 49,
              'num_skills': 5, # How many class_skills a fully ranked unit should have (not actually a hard limit, just for drawing)
-             'max_stat': 20, # Maximum value that a non-HP stat can be. Irrespective of class caps. 
+             'max_stat': 20, # Maximum value that a non-HP stat can be. Irrespective of class caps.
              'num_stats': 10, # Number of stats that a unit has (Includes HP, CON, and MOV)
              'max_level': '10,20,20', # Maximum Level for class by tier ('10, 20, 20,')
              'promoted_level': 19, # Add this to a promoted units level to determine how many levels they've had
              'auto_promote': 0, # Promote after max-level?
+             'inherit_class_skills': 1, # Whether a unit keeps its (non-feat) class skills on promotion
+             'generic_feats': 0, # Whether to give feats to generic units when they auto-level
              'minimum_damage': 0, # Minimum amount of damage that can be dealt (switch to 1 to make it like FE2 or FE15)
              'boss_crit': 0, # Whether the lethal hit on a boss shows a crit
              'steal_exp': 0, # Amount of exp gained from stealing
              'unarmed_punish': 0, # How much weapon disadvantage an unarmed unit gets
              'convoy_on_death': 0, # Should dead units give all of their items to the convoy at the end of each level?
+             'zero_move': 0, # Should enemy units with an AI that doesn't move show as 0 movement?
              'fatal_wexp': 1, # Should units get double weapon experience on lethal hits
              'double_wexp': 1, # Give wexp for every hit (so if you double, you get 2x wexp)
              'miss_wexp': 1, # Give wexp even if you do no damage or miss
@@ -129,6 +119,7 @@ def read_constants_file():
              'music_promotion': '',
              'attribution': 'created by rainlash',
              'title': 'Lex Talionis Engine',
+             'title_particles': 'Smoke',
              'support': 1, # 0 - No supports, 1 - Conversations in combat, 2 - Conversations in base
              'support_bonus': 4, # 0 - No bonus, 1 - Use own affinity, 2 - Use other affinity, 3 - Use average of affinites, 4 - Use sum of affinities
              'support_range': 3, # 0 - Entire map
@@ -141,6 +132,7 @@ def read_constants_file():
              'support_s_limit': 1, # Limit to number of s support levels (>4): 0 - No limit
              'arena_global_limit': 0, # Limit to number of times can use an arena in a level: 0 - No limit
              'arena_unit_limit': 0, # Limit to number of times each unit can use an arena in a level: 0 - No limit
+             'arena_in_base': 0, # Can access the arena in the base menu.
              'arena_death': 1, # Units defeated in the arena are killed. Set to 0 to leave them with 1 HP
              'arena_weapons': 1, # Units will be provided with basic weapons in the arena. Set to 0 to have to bring your own
              'arena_basic_weapons': 'Iron Sword,Iron Lance,Iron Axe,Willow Bow,Glimmer,Fire,Flux',
@@ -156,10 +148,11 @@ def read_constants_file():
                     split_line = line.strip().split('=')
                     lines[split_line[0]] = split_line[1]
 
-    float_lines = {'exp_curve', 'exp_magnitude', 'heal_curve', 'heal_magnitude', 
+    float_lines = {'exp_curve', 'exp_magnitude', 'heal_curve', 'heal_magnitude',
                    'heal_min', 'boss_bonus', 'kill_multiplier'}
     string_lines = {'title', 'music_main', 'music_game_over', 'music_armory',
-                    'music_vendor', 'music_promotion', 'music_arena', 'attribution', 'rng'}
+                    'music_vendor', 'music_promotion', 'music_arena',
+                    'attribution', 'rng', 'title_particles'}
     int_list_lines = {'max_level'}
     string_list_lines = {'arena_basic_weapons'}
     for k, v in lines.items():
@@ -183,7 +176,7 @@ def read_words_file():
             return dict.get(self, key, key)
     lines = WordDict()
     if os.path.isfile('Data/words.txt'):
-        with open('Data/words.txt') as words_file:
+        with open('Data/words.txt', mode='r', encoding='utf-8') as words_file:
             for line in words_file:
                 split_line = line.strip().split(';')
                 if len(split_line) == 2:

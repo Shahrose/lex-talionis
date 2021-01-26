@@ -1,0 +1,31 @@
+## Small major update finalizing some changes I've been wanting to make for a while
+
+Like usual, old saves don't work when you transition to this update
+
+Major Things added:
+
+## New Advanced Status Components
+
+New status components to make skill design easier and more customizable, enabling cool things like Combat Arts, Proc Skills, and custom unit actions.
+
+Check them out here: **TODO link**
+
+## Other updates
+
+1. {unit2} in dialogs should be more useful. {unit2} has been added to the death_quote_info.txt as the unit's killer.
+2. Added ability to merge items together in the "Transfer" menu
+3. Repair shop added as a new event tile
+4. Arena added as a new event tile. More info here: **TODO ARENA INFO**
+5. feat_list master status no longer required. Now just label any statuses you want to use as feats with the "feat" component.
+6. Dragonstone animations (FE8 formatting) should now be convertable by the fegba2lt_animation.exe converted found **TODO**. Make sure there is a Dragonstone.txt, Transform.txt, and Revert.txt script in the initial directory.
+7. Legendary animation now available. Place the component "combat_effect" on an item and then this attribute `<combat_effect>Legend</combat_effect>`
+8. Summoning should work again. Check out how its done in the status.xml/item.xml included with the Lion Throne
+9. Added Silver Card capability
+
+## Minor Bug Fixes/Features
+1. Nosferatu and other lifelink items now only heal up to damage dealt.
+2. Enemy battle music should now be able to be changed
+3. Using a controller should be less likely to crash the game when its an unexpected type of controller.
+4. Integer damage on upkeep with "upkeep_damage" component
+5. Items can now define the battle music with "battle_music" component
+6. Map Sprites can now use 0-9 for gender instead of M and F if you so wish.

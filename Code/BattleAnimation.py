@@ -70,7 +70,7 @@ class BattleAnimation(object):
         else:
             self.current_pose = 'Stand'
 
-    def awake(self, owner, partner, right, at_range, init_speed=None, init_position=None, parent=None):
+    def awake(self, owner, partner, right, at_range, init_speed=0, init_position=None, parent=None):
         # print('Awake')
         self.owner = owner
         self.partner = partner
@@ -103,12 +103,16 @@ class BattleAnimation(object):
             if self.frame_count >= self.num_frames:
                 self.processing = True
                 self.read_script()
-            if self.script_index >= len(self.poses[self.current_pose]):
-                # check whether we should loop or truly end
-                if self.current_pose in self.idle_poses:
-                    self.script_index = 0
-                else:
-                    self.end_current()
+            if self.current_pose in self.poses:
+                if self.script_index >= len(self.poses[self.current_pose]):
+                    # check whether we should loop or truly end
+                    if self.current_pose in self.idle_poses:
+                        self.script_index = 0
+                    else:
+                        self.end_current()
+            else:
+                self.end_current()
+
             self.frame_count += 1
             if self.entrance:
                 self.entrance -= 1
@@ -159,14 +163,14 @@ class BattleAnimation(object):
             parent = self.parent.partner if enemy else self
             child_effect.awake(self.owner, self.partner, right, self.at_range, parent=parent)
             if offset:
-                child_effect.effect_offset = None
+                child_effect.effect_offset = offset
             child_effect.start_anim(self.current_pose)
             return child_effect
         else:
             return None
 
     def add_effect(self, effect, pose=None):
-        if pose:
+        if pose and pose in effect.poses:
             effect.change_pose(pose)
         self.children.append(effect)
 
@@ -199,6 +203,8 @@ class BattleAnimation(object):
         return max(1, int(int(num) * speed))
 
     def read_script(self):
+        if self.current_pose not in self.poses:
+            return
         script = self.poses[self.current_pose]
         while(self.script_index < len(script) and self.processing):
             line = script[self.script_index]
@@ -422,7 +428,7 @@ class BattleAnimation(object):
                 offset = None
             child_effect = self.get_effect(name, offset)
             if child_effect:
-                self.under_children.append(child_effect)
+                self.parent.under_children.append(child_effect)
         elif line[0] == 'enemy_effect':
             name = line[1]
             if len(line) > 2:

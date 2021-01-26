@@ -18,11 +18,11 @@ class Dialogue_Scene(object):
     def __init__(self, scene, unit=None, unit2=None, name=None, tile_pos=None, if_flag=False):
         self.scene = scene
         if self.scene:
-            with open(scene, 'r') as scenefp: # Open this scene's file database
+            with open(scene, encoding='utf-8', mode='r') as scenefp: # Open this scene's file database
                 self.scene_lines = scenefp.readlines()
         else:
             self.scene_lines = []
-        if cf.OPTIONS['debug']: 
+        if cf.OPTIONS['debug']:
             if not self.count_if_statements():
                 logger.error('ERROR: Incorrect number of if and end statements! %s', scene)
 
@@ -34,17 +34,11 @@ class Dialogue_Scene(object):
         self.unit_sprites = {}
         # Dialogs
         self.dialog = []
-        
+
         # Optional unit
         self.unit = unit
-        if self.unit:
-            # logger.debug('locking %s', self.unit)
-            self.unit.lock_active()
         self.unit1 = unit  # Alternate name
         self.unit2 = unit2
-        if self.unit2:
-            # logger.debug('locking %s', self.unit2)
-            self.unit2.lock_active()
         # Name -- What is the given event name for this tile
         self.name = name
         # Tile Pos -- What tile is being acted on, if any (applied in unlock, switch, village, destroy, search, etc. scripts)
@@ -59,8 +53,10 @@ class Dialogue_Scene(object):
         self.waiting = False
 
         # For transition
-        self.transition = 0 # No transition
-        self.transition_transparency = 0 # 0 is transparent
+        self.transition_state = 0  # 0 -- No change, 1 -- To black, 2 -- Away from black
+        self.transition_speed = 15 * GC.FRAMERATE  # How long to transition for
+        self.transition_color = (0, 0, 0)
+        self.transition_transparency = 0  # Amount of alpha (255 fully dark)
         self.transition_last_update = Engine.get_time()
 
         self.scene_lines_index = 0 # Keeps track of where we are in the scene
@@ -71,6 +67,7 @@ class Dialogue_Scene(object):
         self.current_state = "Processing" # Other options are "Waiting", "Transitioning"
         self.last_state = None
         self.do_skip = False
+        self.turnwheel_flag: int = 0 # Whether to enter the turnwheel state after this scene
         self.battle_save_flag = False # Whether to enter the battle save state after this scene has completed
         self.reset_state_flag = False # Whether to reset state to free state after this scene has completed
         self.reset_boundary_manager = False # Whether to reset the boundary manager after this scene has completed. Set to true when tiles are changed
@@ -82,7 +79,7 @@ class Dialogue_Scene(object):
         # Handles skipping
         self.skippable_commands = {'s', 'u', 'qu', 't', 'wait', 'bop', 'mirror',
                                    'map_pan', 'set_expression', 'sound',
-                                   'credits', 'endings', 'cinematic', 'start_move', 
+                                   'credits', 'endings', 'cinematic', 'start_move',
                                    'move_sprite', 'qmove_sprite', 'midground_movie',
                                    'foreground_movie'}
 
@@ -110,7 +107,7 @@ class Dialogue_Scene(object):
         if not self.current_state == "Paused":
             self.current_state = "Processing"
         # Reset transition
-        self.transition = 0
+        self.transition_state = 0  # 0 -- No change, 1 -- To black, 2 -- Away from black
         self.transition_transparency = 0
         # Remove midground and foreground
         self.midground = None
@@ -201,19 +198,15 @@ class Dialogue_Scene(object):
                 self.end()
 
         elif self.current_state == "Transitioning":
-            if self.transition == 1: # Increasing
-                self.transition_transparency = current_time - self.transition_last_update
-            elif self.transition == 2:
-                self.transition_transparency = 255 - (current_time - self.transition_last_update)
-            elif self.transition == 3:
-                self.transition_transparency = (current_time - self.transition_last_update)//2
-            elif self.transition == 4:
-                self.transition_transparency = 255 - (current_time - self.transition_last_update)//2
-            if self.transition_transparency > 255 + 5*GC.FRAMERATE or self.transition_transparency < 0: # I want 5 extra frames in black
+            progress = (current_time - self.transition_last_update) / self.transition_speed
+            if self.transition_state == 1:  # Increasing transition
+                self.transition_transparency = 255 * Utility.clamp(progress, 0, 1)
+            elif self.transition_state == 2:  # Decreasing transition
+                self.transition_transparency = 255 - (255 * Utility.clamp(progress, 0, 1))
+            if progress > 1.33 or progress < 0:
                 self.current_state = "Processing"
                 if self.scene_lines_index >= len(self.scene_lines): # Check if we're done
                     self.end()
-            self.transition_transparency = Utility.clamp(self.transition_transparency, 0, 255)
 
         elif self.current_state == "Displaying": # Don't dialog while transitioning or processing
             if self.dialog: # Only update dialog if it exists, could also just be waiting or not even in this state
@@ -229,12 +222,6 @@ class Dialogue_Scene(object):
 
     def end(self):
         self.done = True
-        if self.unit:
-            # logger.debug('Unlocking %s', self.unit)
-            self.unit.unlock_active()
-        if self.unit2:
-            # logger.debug('Unlocking %s', self.unit2)
-            self.unit2.unlock_active()
         return
 
     def parse_line(self, line, gameStateObj=None, metaDataObj=None):
@@ -276,7 +263,7 @@ class Dialogue_Scene(object):
         # === MOVIES
         elif line[0] == 'foreground_movie' or line[0] == 'midground_movie':
             movie = Background.MovieBackground(
-                line[1], speed='slow' in line, loop='loop' in line, 
+                line[1], speed='slow' in line, loop='loop' in line,
                 fade_out='fade_out' in line)
             if line[0] == 'foreground_movie':
                 self.foreground = movie
@@ -338,6 +325,10 @@ class Dialogue_Scene(object):
                 self.background.teleport_sprite(line[1], new_position)
             else:
                 self.background.set_sprite(line[1], new_position, slow='slow' in line)
+        elif line[0] == 'wm_focus_unit':
+            self.background.focus_sprite(line[1])
+        elif line[0] == 'wm_unfocus_unit':
+            self.background.unfocus_sprite(line[1])
         elif line[0] == 'wm_label':
             name = line[1]
             position = self.parse_pos(line[2], gameStateObj)
@@ -420,7 +411,7 @@ class Dialogue_Scene(object):
         # === UNIT SPRITE
         # Add a unit to the scene
         elif line[0] == 'u':
-            # This is a complicated method of parsing unit lines using 'u' as delimeter
+            # This is a complicated method of parsing unit lines using 'u' as delimiter
             spl = []
             w = 'u'
             for x, y in itertools.groupby(line, lambda z: z == w):
@@ -429,14 +420,14 @@ class Dialogue_Scene(object):
                 spl[-1].extend(y)
 
             for sub_command in spl:
-                if self.add_unit_sprite(sub_command, transition=True):
+                if self.add_unit_sprite(gameStateObj, sub_command, transition=True):
                     # Force wait after unit sprite is drawn to allow time to transition.
                     self.waittime = 266  # 16 frames
                     self.last_wait_update = Engine.get_time()
                     self.current_state = "Waiting"
         # Add a unit to the scene without transition
         elif line[0] == 'qu':
-            self.add_unit_sprite(line, transition=False)
+            self.add_unit_sprite(gameStateObj, line, transition=False)
         # Change a unit's expression
         elif line[0] == 'set_expression':
             # Legal commands (Smile, NoSmile, NormalBlink, OpenEyes, CloseEyes, HalfCloseEyes)
@@ -506,8 +497,8 @@ class Dialogue_Scene(object):
                 gameStateObj.phase_music.change_music(line[1], line[2])
         elif line[0] == 'music_clear':
             logger.debug('Clear music stack')
-            Engine.music_thread.clear()
-        # Music fade clear would just be 
+            Engine.music_thread.fade_clear()
+        # Music fade clear would just be
         # > music_clear
         # > mf
 
@@ -522,7 +513,7 @@ class Dialogue_Scene(object):
             elif line[1] == 'Convoy':
                 receiver = None
             else:
-                receiver = gameStateObj.get_unit_from_id(line[1])
+                receiver = gameStateObj.get_unit(line[1])
             # Append item to list of units items
             if line[2] != "0":
                 item = ItemMethods.itemparser(line[2], gameStateObj)
@@ -553,12 +544,15 @@ class Dialogue_Scene(object):
 
         # Give the player gold!
         elif line[0] == 'gold':
-            if len(line) > 2:
+            if len(line) > 2 and line[2] != 'no_banner':
                 party = line[2]
             else:
                 party = gameStateObj.current_party
-            Action.do(Action.GiveGold(int(line[1]), party), gameStateObj)
-            self.current_state = "Paused"
+            if 'no_banner' in line:
+                Action.execute(Action.GiveGold(int(line[1]), party), gameStateObj)
+            else:
+                Action.do(Action.GiveGold(int(line[1]), party), gameStateObj)
+                self.current_state = "Paused"
 
         elif line[0] == 'remove_item':
             unit = self.get_unit(line[1], gameStateObj)
@@ -574,10 +568,17 @@ class Dialogue_Scene(object):
             unit = self.get_unit(line[1], gameStateObj)
             if unit and skill:
                 Action.do(Action.AddStatus(unit, skill), gameStateObj)
-                if 'no_display' not in line:
-                    gameStateObj.banners.append(Banner.gainedSkillBanner(self.unit, skill))
+                if 'no_display' not in line and 'no_banner' not in line:
+                    gameStateObj.banners.append(Banner.gainedSkillBanner(unit, skill))
                     gameStateObj.stateMachine.changeState('itemgain')
                     self.current_state = "Paused"
+
+        # Add a skill/status to a unit
+        elif line[0] == 'remove_skill':
+            unit = self.get_unit(line[1], gameStateObj)
+            skill_id = line[2]
+            if unit:
+                Action.do(Action.RemoveStatus(unit, skill_id), gameStateObj)
 
         # Give exp to a unit
         elif line[0] == 'exp_gain' or line[0] == 'give_exp':
@@ -587,6 +588,21 @@ class Dialogue_Scene(object):
                 gameStateObj.exp_gain_struct = (unit, exp, None, 'init')
                 gameStateObj.stateMachine.changeState('exp_gain')
                 self.current_state = "Paused"
+
+        # Increment a single stat of a unit
+        elif line[0] == 'inc_stat':
+            unit = self.get_unit(line[1], gameStateObj)
+            stat = line[2]
+            amount = line[3]
+            if unit:
+                Action.do(Action.ChangeStat(unit, stat, amount), gameStateObj)
+
+        # Modify fatigue of a unit
+        elif line[0] == 'change_fatigue':
+            amount = int(line[2])
+            receiver = self.get_unit(line[1], gameStateObj)
+            if receiver:
+                Action.do(Action.ChangeFatigue(receiver, amount, True), gameStateObj)
 
         # destroy a destructible object
         elif line[0] == 'destroy':
@@ -605,7 +621,7 @@ class Dialogue_Scene(object):
             to_which_position = line[2] if len(line) > 2 else None
             transition = line[3] if (len(line) > 3 and line[3]) else 'fade'
             placement = line[4] if (len(line) > 4 and line[4]) else 'give_up'
-            order = True if len(line) > 5 else False 
+            order = True if len(line) > 5 else False
             self.add_unit(gameStateObj, metaDataObj, which_unit, to_which_position, transition, placement, shuffle=not order)
         elif line[0] == 'create_unit':
             # Read input
@@ -614,7 +630,7 @@ class Dialogue_Scene(object):
             to_which_position = line[3] if len(line) > 3 else None
             transition = line[4] if (len(line) > 4 and line[4]) else 'fade'
             placement = line[5] if (len(line) > 5 and line[5]) else 'give_up'
-            order = True if len(line) > 6 else False 
+            order = True if len(line) > 6 else False
             self.add_unit(gameStateObj, metaDataObj, which_unit, to_which_position, transition, placement, shuffle=not order, create=level)
         elif line[0] == 'move_unit':
             # Read input
@@ -629,7 +645,9 @@ class Dialogue_Scene(object):
             gameStateObj.stateMachine.changeState('movement')
             # Camera follow
             if len(line) > 1:
-                gameStateObj.cursor.camera_follow = gameStateObj.get_unit(line[1]).id
+                unit = gameStateObj.get_unit(line[1])
+                if unit:
+                    gameStateObj.cursor.camera_follow = unit.id
         elif line[0] == 'interact_unit':
             # Read input
             attacker = line[1]
@@ -637,7 +655,7 @@ class Dialogue_Scene(object):
             if len(line) > 3:
                 event_combat = [command.lower() for command in reversed(line[3].split(','))]
             else:
-                event_combat = None
+                event_combat = ['--'] * 8  # Default event combat so that the Engine knows its an event combat
             self.interact_unit(gameStateObj, attacker, defender, event_combat)
         elif line[0] == 'remove_unit' or line[0] == 'kill_unit':
             # Read input
@@ -710,7 +728,7 @@ class Dialogue_Scene(object):
             else:
                 gameStateObj.cameraOffset.set_xy(pos1[0], pos1[1])
             if 'immediate' not in line and not self.do_skip:
-                gameStateObj.stateMachine.changeState('move_camera')      
+                gameStateObj.stateMachine.changeState('move_camera')
                 self.current_state = "Paused"
         elif line[0] == 'tutorial_mode':
             if line[1] == '0':
@@ -762,7 +780,11 @@ class Dialogue_Scene(object):
             gameStateObj.statedict['levelIsComplete'] = 'loss'
         elif line[0] == 'win_game':
             gameStateObj.statedict['levelIsComplete'] = 'win'
-
+        elif line[0] == 'activate_turnwheel':
+            if len(line) > 1: # Force turnwheel
+                self.turnwheel_flag = 2
+            else: # Optional Turnwheel
+                self.turnwheel_flag = 1
         elif line[0] == 'battle_save':
             # Using a flag instead of just going to battle save state because if I save while
             # there's a dialogue state on the stack, the dialogue has a surface which crashes the save
@@ -836,16 +858,16 @@ class Dialogue_Scene(object):
                 for tile_property in property_list:
                     Action.do(Action.AddTileProperty(coord, tile_property.split('=')), gameStateObj)
             else:
-                for tile_property in gameStateObj.map.tile_info_dict[coord].items():
-                    Action.do(Action.RemoveTileProperty(coord, tile_property), gameStateObj)
+                for tile_property_name in list(gameStateObj.map.tile_info_dict[coord].keys()):
+                    Action.do(Action.RemoveTileProperty(coord, tile_property_name), gameStateObj)
         elif line[0] == 'add_tile_property':
             coord = self.parse_pos(line[1], gameStateObj)
             tile_property = line[2]
-            Action.do(Action.AddTileProperty(coord, tile_property), gameStateObj)
+            Action.do(Action.AddTileProperty(coord, tile_property.split('=')), gameStateObj)
         elif line[0] == 'remove_tile_property':
             coord = self.parse_pos(line[1], gameStateObj)
-            tile_property = line[2]
-            Action.do(Action.RemoveTileProperty(coord, tile_property), gameStateObj)
+            tile_property_name = line[2]
+            Action.do(Action.RemoveTileProperty(coord, tile_property_name), gameStateObj)
         # Add weather
         elif line[0] == 'add_weather':
             Action.do(Action.AddWeather(line[1]), gameStateObj)
@@ -861,13 +883,13 @@ class Dialogue_Scene(object):
         # Load submap
         elif line[0] == 'load_submap':
             gameStateObj.load_submap(line[1])
-        # Remove submap            
+        # Remove submap
         elif line[0] == 'close_submap':
             gameStateObj.close_submap()
 
         # === CLEANUP
         elif line[0] == 'arrange_formation':
-            force = True if len(line) > 1 else False
+            force = (len(line) > 1)
             if force:  # force arrange
                 player_units = gameStateObj.get_units_in_party(gameStateObj.current_party)
                 formation_spots = [pos for pos, value in gameStateObj.map.tile_info_dict.items()
@@ -876,6 +898,10 @@ class Dialogue_Scene(object):
                 player_units = [unit for unit in gameStateObj.get_units_in_party(gameStateObj.current_party) if not unit.position]
                 formation_spots = [pos for pos, value in gameStateObj.map.tile_info_dict.items()
                                    if 'Formation' in value and not gameStateObj.grid_manager.get_unit_node(pos)]
+            
+            if cf.CONSTANTS['fatigue'] and gameStateObj.game_constants['Fatigue'] == 1:
+                player_units = [unit for unit in player_units if unit.fatigue < GC.EQUATIONS.get_max_fatigue(unit)]
+
             for index, unit in enumerate(player_units[:len(formation_spots)]):
                 if force:
                     Action.do(Action.LeaveMap(unit), gameStateObj)
@@ -938,25 +964,48 @@ class Dialogue_Scene(object):
             gameStateObj.market_items.add(line[1])
         elif line[0] == 'remove_from_market':
             gameStateObj.market_items.discard(line[1])
-            
+
         # === TRANSITIONS
         elif line[0] == 't': # Handle transition
-            if line[1] == '1':
-                self.transition = 1
-                self.transition_transparency = 0 # Increasing
-            elif line[1] == '2':
-                self.transition = 2
-                self.transition_transparency = 255 # Decreasing
-            elif line[1] == '3':
-                self.transition = 3
+            mode = line[1]
+            if len(line) > 2 and line[2]:
+                self.transition_color = tuple([int(num) for num in line[2].split(',')])
+            if len(line) > 3:
+                self.transition_speed = int(line[3])
+            if mode == '1':
+                self.transition_state = 1
                 self.transition_transparency = 0
-            elif line[1] == '4':
-                self.transition = 4
+            elif mode == '2':
+                self.transition_state = 2
                 self.transition_transparency = 255
+            elif mode == '3':
+                self.transition_state = 1
+                self.transition_transparency = 0
+                self.transition_speed = 30 * GC.FRAMERATE
+            elif mode == '4':
+                self.transition_state = 2
+                self.transition_transparency = 255
+                self.transition_speed = 30 * GC.FRAMERATE
             self.transition_last_update = Engine.get_time()
             self.current_state = "Transitioning"
-        
+
         # === CHANGING UNITS
+        elif line[0] == 'change_name':
+            unit = self.get_unit(line[1], gameStateObj)
+            new_name = line[2]
+            if unit:
+                Action.do(Action.ChangeName(unit, new_name), gameStateObj)
+            else:
+                print("Cannot find unit with name/id: %s" % line[1])
+        elif line[0] == 'change_portrait':
+            unit = self.get_unit(line[1], gameStateObj)
+            portrait_id = line[2]
+            if unit and portrait_id in GC.PORTRAITDICT:
+                Action.do(Action.ChangePortrait(unit, portrait_id), gameStateObj)
+            elif unit:
+                print("%s not in portrait dictionary. Need to assign blink and mouth positions to pic" % (portrait_id))
+            else:
+                print("Cannot find unit with name/id: %s" % line[1])
         elif line[0] == 'convert':
             assert len(line) == 3
             unit_specifier = self.get_id(line[1], gameStateObj)
@@ -989,12 +1038,14 @@ class Dialogue_Scene(object):
                 if unit.party == guest:
                     Action.do(Action.ChangeParty(unit, host), gameStateObj)
             # Merge items
-            for item in gameStateObj._convoy[guest]:
-                gameStateObj._convoy[host].append(item)
-            gameStateObj._convoy[guest] = []
+            if guest in gameStateObj._convoy and host in gameStateObj._convoy:
+                for item in gameStateObj._convoy[guest]:
+                    gameStateObj._convoy[host].append(item)
+                gameStateObj._convoy[guest] = []
             # Merge money
-            gameStateObj._money[host] += gameStateObj._money[guest]
-            gameStateObj._money[guest] = 0
+            if guest in gameStateObj._money and host in gameStateObj._money:
+                gameStateObj._money[host] += gameStateObj._money[guest]
+                gameStateObj._money[guest] = 0
         elif line[0] == 'clear_turnwheel_history':
             gameStateObj.action_log.reset_first_free_action()
 
@@ -1023,13 +1074,18 @@ class Dialogue_Scene(object):
             name = line[1]
             header = line[2]
             options = line[3].split(',')
+            # Check for arrangement if specified.
+            if len(line) > 4 and line[4] in ('v', 'vertical', 'h', 'horizontal'):
+                arrangement = line[4]
+            else:
+                arrangement = 'h'
             # Save results to the game constants
-            gameStateObj.game_constants['choice'] = (name, header, options)
+            gameStateObj.game_constants['choice'] = (name, header, options, arrangement)
             self.current_state = "Paused"
             gameStateObj.stateMachine.changeState('dialog_options')
-            
+
         # === DIALOGUE BOX
-        # Add line of text          
+        # Add line of text
         elif line[0] == 's':
             self.evaluate_evals(line, gameStateObj)
             self.add_dialog(line)
@@ -1280,7 +1336,7 @@ class Dialogue_Scene(object):
 
         # Update unit sprites -- if results in true, delete the unit sprite. -- faciliates 'r' command fade out
         delete = [key for key, unit in self.unit_sprites.items() if unit.update()]
-        for key in delete: 
+        for key in delete:
             del self.unit_sprites[key]
 
         # === SCENE SPRITES ===
@@ -1301,11 +1357,15 @@ class Dialogue_Scene(object):
                 self.current_state = "Processing" # Done waiting. Head back to processing
 
         s = GC.IMAGESDICT['BlackBackground'].copy()
-        s.fill((0, 0, 0, self.transition_transparency))
+        if len(self.transition_color) == 3:
+            s.fill((*self.transition_color, self.transition_transparency))
+        else:
+            s.fill((0, 0, 0, self.transition_transparency))
         surf.blit(s, (0, 0))
 
-    def add_unit_sprite(self, line, transition=False):
+    def add_unit_sprite(self, gameStateObj, line, transition=False):
         name = self.get_name(line[1])
+        portrait_id = self.get_portrait_id(line[1], gameStateObj)
         if name in self.unit_sprites and not self.unit_sprites[name].remove_flag:
             return False
         if line[2] in hardset_positions:
@@ -1314,7 +1374,7 @@ class Dialogue_Scene(object):
             if 'mirror' in line:
                 mirrorflag = not mirrorflag
         else:
-            position = [int(line[2]), int(line[3])]    
+            position = [int(line[2]), int(line[3])]
             mirrorflag = True if 'mirror' in line else False
         # Priority
         if 'LowPriority' in line:
@@ -1339,11 +1399,11 @@ class Dialogue_Scene(object):
         if 'Narration' in line:
             position[1] = 30
         # Blink/Mouth positions
-        assert name in GC.PORTRAITDICT, "%s not in portrait dictionary. Need to assign blink and mouth positions to pic"%(name)
-        blink = GC.PORTRAITDICT[name]['blink']
-        mouth = GC.PORTRAITDICT[name]['mouth']
+        assert portrait_id in GC.PORTRAITDICT, "%s not in portrait dictionary. Need to assign blink and mouth positions to pic"%(portrait_id)
+        blink = GC.PORTRAITDICT[portrait_id]['blink']
+        mouth = GC.PORTRAITDICT[portrait_id]['mouth']
         self.unit_sprites[name] = UnitPortrait.UnitPortrait(
-            portrait_name=name, blink_position=blink, mouth_position=mouth, transition=transition,
+            portrait_name=portrait_id, blink_position=blink, mouth_position=mouth, transition=transition,
             position=position, priority=priority, mirror=mirrorflag, expression=expression, slide=slide)
 
         return True
@@ -1365,7 +1425,7 @@ class Dialogue_Scene(object):
         if create:
             unitLine = gameStateObj.prefabs.get(which_unit)
             if not unitLine:
-                logger.warning('Could not find %s' in unitLine)
+                logger.warning('Could not find %s in unitLine' % which_unit)
                 return
             new_unitLine = unitLine[:]
             new_unitLine.insert(4, create)
@@ -1387,7 +1447,10 @@ class Dialogue_Scene(object):
                     return
             # print(unit.id, position)
             if unit.dead:
-                logger.warning('Unit %s is dead', unit.id)
+                logger.warning('Unit %s is dead!', unit.id)
+                return
+            if unit.position:
+                logger.warning("Unit %s already has a position!", unit.id)
                 return
         if not unit:
             logger.error('Could not find unit %s', which_unit)
@@ -1419,7 +1482,7 @@ class Dialogue_Scene(object):
 
         #print("Add Unit: New Pos")
         #print(new_pos)
-        if new_pos == [None]:
+        if None in new_pos:
             #print(context)
             #print(which_unit)
             logger.warning('Position for "add_unit" is not set!')
@@ -1485,7 +1548,12 @@ class Dialogue_Scene(object):
             new_pos = self.get_position(new_pos, gameStateObj)
         # If name, then we want to find a point adjacent to that characters position
         else:
-            new_pos = [gameStateObj.get_unit_from_id(new_pos).position]
+            target = gameStateObj.get_unit_from_id(new_pos)
+            if target and target.position:
+                new_pos = [target.position]
+            else:
+                logger.warning('Could not find target %s. Target is not on map.', new_pos)
+                return
 
         # Shuffle positions if necessary
         if shuffle:
@@ -1690,6 +1758,18 @@ class Dialogue_Scene(object):
         else:
             return name
 
+    def get_portrait_id(self, name, gameStateObj):
+        if name == '{unit}':
+            return self.unit.portrait_id
+        elif name == '{unit2}' and self.unit2:
+            return self.unit2.portrait_id
+        else:
+            unit = gameStateObj.get_unit(name)
+            if unit:
+                return unit.portrait_id
+            else:
+                return name
+
     def get_unit(self, uid, gameStateObj):
         if uid == '{unit}':
             return self.unit
@@ -1706,14 +1786,14 @@ class Dialogue_Scene(object):
             func = Action.execute  # Does not display banner
         if unit:
             if choice:  # You can make convoy decision here
-                func(Action.GiveItem(unit, item), gameStateObj)    
+                func(Action.GiveItem(unit, item), gameStateObj)
             elif len(unit.items) < cf.CONSTANTS['max_items']:
                 func(Action.GiveItem(unit, item, False), gameStateObj)
             else:
                 func(Action.PutItemInConvoy(item), gameStateObj)
         else:
             func(Action.PutItemInConvoy(item), gameStateObj)
-        
+
 # === DIALOG CLASS ============================================================
 class Dialog(object):
     def __init__(self, text, owner, position, size, font,
@@ -1735,7 +1815,7 @@ class Dialog(object):
         self.scroll_y = 0 # For scroll effect
 
         self.set_text() # Converts {} style constructs into commands. Adds truetext to text
-       
+
         self.main_font = GC.FONT[font]
         self.current_font = font.split('_')[0]
         self.current_color = font.split('_')[1]
@@ -1765,7 +1845,7 @@ class Dialog(object):
         self.hold = hold
 
         # To match dialogue scene, so it can be used in the same place.
-        self.transition = transition
+        self.transition_state = transition
         self.transition_transparency = 0
         self.dialog = False
 
@@ -1813,7 +1893,7 @@ class Dialog(object):
 
     def _add_letter(self, letter):
         self.text_lines[-1][-1][0] += letter
-        
+
     def _next_char(self):  # draw the next character
         if self.waiting:
             return True  # Wait!
@@ -1842,19 +1922,19 @@ class Dialog(object):
                 self._next_line()
             return True # we're waiting
         elif letter == "{clear}":
-            self.text.append("{erase}")
-            for x in range(self.num_lines-1):
-                self.text.append("{br}")
+            self.text_lines = []
             self._next_line()
         elif letter == "{erase}":
             self.text_lines = []
             self._next_line()
         elif letter == "{black}":
             self.current_color = "black"
-            self._next_chunk()            
+            self._next_chunk()
         elif letter == "{red}":
             self.current_color = "red"
             self._next_chunk()
+        elif letter == "{semicolon}":
+            self._add_letter(";")
         else:
             both_width = self._get_word_width(word)
             # print(letter, previous_lines, word[::-1], both_width, self.text_width)
@@ -1864,7 +1944,7 @@ class Dialog(object):
                     self._add_letter(letter)
             else:
                 self._add_letter(letter) # Add the letter to the most recent chunk
- 
+
         return False
 
     def _get_word_width(self, word):
@@ -1876,7 +1956,7 @@ class Dialog(object):
                 previous_lines = chunk + previous_lines
 
         return font.size(previous_lines + word[::-1])[0] # Can actually differ from above due to ligatures/digraphs.
-            
+
     def draw_text(self, surf, pos):
         x, y = pos
         self.scroll_help = int(math.ceil(self.scroll_y/float(self.main_font.height)))
@@ -1923,7 +2003,7 @@ class Dialog(object):
         # If we wouldn't actually be on the dialogue box
         if x_position > self.dlog_box.get_width() + self.topleft[0] - 24:
             x_position = self.topleft[0] + self.dlog_box.get_width() - 24
-        elif x_position < self.topleft[0] + 8: 
+        elif x_position < self.topleft[0] + 8:
             x_position = self.topleft[0] + 8
 
         surf.blit(tail_surf, (x_position, y_position))
@@ -1940,7 +2020,7 @@ class Dialog(object):
             surf.blit(name_tag_surf, pos)
 
     def hurry_up(self):
-        self.transition = False
+        self.transition_state = False
         while not self._next_char():
             pass # while we haven't reached the end, process all the next chars...
 
@@ -1950,11 +2030,11 @@ class Dialog(object):
         return self.done
 
     def update(self):
-        if self.transition:
+        if self.transition_state:
             self.transition_transparency += 1 # 10 is max # 10 frames to load in
             if self.transition_transparency >= 10:
                 # Done transitioning
-                self.transition = False
+                self.transition_state = False
                 if self.talk and self.owner in self.unit_sprites:
                     self.unit_sprites[self.owner].talk()
         elif self.scroll_y > 0:
@@ -1979,20 +2059,20 @@ class Dialog(object):
 
     def draw(self, surf):
         text_surf = self.text_surf.copy()
-        if self.transition:
+        if self.transition_state:
             scroll = 0
         else:
             end_text_position = self.draw_text(text_surf, (0, 0))
             scroll = int(self.main_font.height*self.scroll_help - self.scroll_y)
         text_surf = Engine.subsurface(text_surf, (0, scroll, text_surf.get_width(), text_surf.get_height() - scroll))
-            
+
         surf_pos = self.position
         if surf_pos == 'center':
             self.topleft = (GC.WINWIDTH//2 - self.dlog_box.get_width()//2, GC.WINHEIGHT//2 - self.dlog_box.get_height()//2)
         else:
             self.topleft = surf_pos
 
-        if self.transition:
+        if self.transition_state:
             dlog_box = Image_Modification.resize(self.dlog_box, (1, self.transition_transparency/20. + .5))
             dlog_box = Image_Modification.flickerImageTranslucent(dlog_box, 100 - self.transition_transparency*10)
             topleft = self.topleft[0], self.topleft[1] + self.dlog_box.get_height() - dlog_box.get_height()
@@ -2001,7 +2081,7 @@ class Dialog(object):
             topleft = self.topleft
         surf.blit(dlog_box, topleft)
 
-        if not self.transition:
+        if not self.transition_state:
             if self.message_tail:
                 self.add_message_tail(surf)
             self.add_nametag(surf)
@@ -2170,7 +2250,7 @@ class Cinematic(object):
             else:
                 self.transition_state = 'fade_out'
                 self.start_time = current_time
-        
+
         if self.transition_state == 'fade_in':
             transition = int(Utility.linear_ease(100, 0, current_time - self.start_time, self.transition_time))
             self.image = Image_Modification.flickerImageTranslucent(self.surface, transition)
@@ -2223,7 +2303,7 @@ class LocationCard(object):
         if current_time - self.start_time > self.wait + self.transition_time:
             self.transition_state = 'fade_out'
             self.start_time = current_time
-        
+
         if self.transition_state == 'fade_in':
             transition = int(Utility.linear_ease(100, 0, current_time - self.start_time, self.transition_time))
             self.image = Image_Modification.flickerImageTranslucent(self.surface, transition)

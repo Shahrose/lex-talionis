@@ -1,2 +1,0 @@
-set_origin
-set_tile_info;o0,0

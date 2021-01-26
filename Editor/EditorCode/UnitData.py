@@ -1,6 +1,10 @@
 from collections import OrderedDict
 import sys
-from PyQt4 import QtGui, QtCore
+
+from PyQt5.QtWidgets import QWidget, QStyledItemDelegate, QGridLayout, QPushButton, QErrorMessage
+from PyQt5.QtWidgets import QLabel, QComboBox, QHBoxLayout, QListWidgetItem, QMessageBox, QInputDialog
+from PyQt5.QtCore import QSize
+from PyQt5.QtGui import QColor
 
 sys.path.append('../')
 import Code.Engine as Engine
@@ -15,16 +19,10 @@ from Code.StatObject import build_stat_dict
 import Code.Utility as Utility
 from Code.Triggers import Trigger
 
-try:
-    import DataImport
-    from DataImport import Data
-    import EditorUtilities, Faction, UnitDialogs
-    from CustomGUI import DragAndDropSignalList
-except ImportError:
-    from . import DataImport
-    from EditorCode.DataImport import Data
-    from . import EditorUtilities, Faction, UnitDialogs
-    from EditorCode.CustomGUI import DragAndDropSignalList
+from . import DataImport
+from EditorCode.DataImport import Data
+from . import EditorUtilities, Faction, UnitDialogs
+from EditorCode.CustomGUI import DragAndDropSignalList
 
 class UnitData(object):
     def __init__(self):
@@ -40,7 +38,7 @@ class UnitData(object):
     def load(self, fp):
         self.clear()
         current_mode = [mode['name'] for mode in GC.DIFFICULTYDATA.values()] # Defaults to all modes
-        with open(fp) as data:
+        with open(fp, mode='r', encoding='utf-8') as data:
             unitcontent = data.readlines()
             for line in unitcontent:
                 # Process each line that was in the level file.
@@ -78,41 +76,41 @@ class UnitData(object):
                     return rein
         return None
 
-    def get_unit_from_pos(self, pos, mode):
+    def get_unit_from_pos(self, pos, modes):
         for unit in self.units:
-            if unit.position == pos and mode in unit.mode:
+            if unit.position == pos and any(mode in modes for mode in unit.mode):
                 return unit
         # print('Could not find unit at %s, %s' % (pos[0], pos[1]))
 
-    def get_rein_from_pos(self, pos, mode, pack):
+    def get_rein_from_pos(self, pos, modes, pack):
         for rein in self.reinforcements:
-            if rein.position == pos and mode in rein.mode and rein.pack == pack:
+            if rein.position == pos and any(mode in modes for mode in rein.mode) and rein.pack == pack:
                 return rein
         # print('Could not find unit at %s, %s' % (pos[0], pos[1]))
 
-    def get_idx_from_pos(self, pos, mode):
+    def get_idx_from_pos(self, pos, modes):
         for idx, unit in enumerate(self.units):
-            if unit.position == pos and mode in unit.mode:
+            if unit.position == pos and any(mode in modes for mode in unit.mode):
                 return idx
         # print('Could not find unit at %s, %s' % (pos[0], pos[1]))
         return -1
 
-    def get_ridx_from_pos(self, pos, mode, pack):
+    def get_ridx_from_pos(self, pos, modes, pack):
         for idx, rein in enumerate(self.reinforcements):
-            if rein.position == pos and mode in rein.mode and rein.pack == pack:
+            if rein.position == pos and any(mode in modes for mode in rein.mode) and rein.pack == pack:
                 return idx
         # print('Could not find unit at %s, %s' % (pos[0], pos[1]))
         return -1
 
-    def get_unit_str(self, pos, mode):
+    def get_unit_str(self, pos, modes):
         for unit in self.units:
-            if unit.position == pos and mode in unit.mode:
+            if unit.position == pos and any(mode in modes for mode in unit.mode):
                 return unit.name + ': ' + unit.klass + ' ' + str(unit.level) + ' -- ' + ','.join([item.name for item in unit.items])
         return ''
 
-    def get_reinforcement_str(self, pos, pack, mode):
+    def get_reinforcement_str(self, pos, modes, pack):
         for rein in self.reinforcements:
-            if rein.position == pos and mode in rein.mode and rein.pack == pack:
+            if rein.position == pos and any(mode in modes for mode in rein.mode) and rein.pack == pack:
                 return pack + '_' + str(rein.event_id) + ': ' + rein.klass + ' ' + str(rein.level) + ' -- ' + ','.join([item.name for item in rein.items])
         return ''
 
@@ -120,7 +118,7 @@ class UnitData(object):
         def read_trigger_line(unitLine, current_mode):
             if ',' in unitLine[2]:
                 position = tuple(int(n) for n in unitLine[2].split(','))
-                return self.get_unit_from_pos(position, current_mode[0])
+                return self.get_unit_from_pos(position, current_mode)
             else:
                 unit = self.get_unit_from_id(unitLine[2])
                 if unit:
@@ -163,10 +161,16 @@ class UnitData(object):
         self.add_unit_from_legend(legend, mode)
 
     def add_unit_from_legend(self, legend, mode):
-        cur_unit = Data.unit_data[legend['unit_id']]
+        unit_prefab = Data.unit_data.get(legend['unit_id'])
+        if not unit_prefab:
+            return
+        cur_unit = unit_prefab.copy()
         position = tuple([int(num) for num in legend['position'].split(',')]) if ',' in legend['position'] else None
         cur_unit.position = position
-        cur_unit.ai = legend['ai']
+        if '_' in legend['ai']:
+            cur_unit.ai, cur_unit.ai_group = legend['ai'].split('_')
+        else:
+            cur_unit.ai, cur_unit.ai_group = legend['ai'], None
         cur_unit.team = legend['team']
         cur_unit.mode = mode
         if legend['unit_type'] == '1':
@@ -175,7 +179,9 @@ class UnitData(object):
             cur_unit.saved = False
         if legend['event_id'] != "0": # unit does not start on board
             if '_' in legend['event_id']:
-                cur_unit.pack, cur_unit.event_id = legend['event_id'].split('_')
+                split_term = legend['event_id'].split('_')
+                cur_unit.pack = '_'.join(split_term[:-1])
+                cur_unit.event_id = split_term[-1]
                 cur_unit.event_id = int(cur_unit.event_id)
             else:
                 cur_unit.pack, cur_unit.event_id = legend['event_id'], 1
@@ -252,7 +258,9 @@ class UnitData(object):
         u_i['id'] = GC.U_ID
         u_i['team'] = legend['team']
         if '_' in legend['event_id']:
-            u_i['pack'], u_i['event_id'] = legend['event_id'].split('_')
+            split_term = legend['event_id'].split('_')
+            u_i['pack'] = '_'.join(split_term[:-1])
+            u_i['event_id'] = split_term[-1]
             u_i['event_id'] = int(u_i['event_id'])
         elif legend['event_id'] != '0':
             u_i['pack'] = legend['event_id']
@@ -285,12 +293,15 @@ class UnitData(object):
             self.get_unit_info(Data.class_dict, u_i['klass'], u_i['level'], legend['items'])
         u_i['stats'] = build_stat_dict(stats)
         
-        u_i['tags'] = Data.class_dict[u_i['klass']]['tags']
+        cur_class = Data.class_dict.get(u_i['klass'], Data.class_dict.get('Citizen'))
+        if not cur_class:
+            raise KeyError("Must have Citizen class! Do not delete Citizen class!")
+        u_i['tags'] = cur_class['tags']
         if '_' in legend['ai']:
             u_i['ai'], u_i['ai_group'] = legend['ai'].split('_')
         else:
             u_i['ai'], u_i['ai_group'] = legend['ai'], None
-        u_i['movement_group'] = Data.class_dict[u_i['klass']]['movement_group']
+        u_i['movement_group'] = cur_class['movement_group']
         u_i['skills'] = []
         u_i['generic'] = True
         u_i['mode'] = mode
@@ -313,8 +324,14 @@ class UnitData(object):
     def get_unit_info(self, class_dict, klass, level, item_line):
         # Handle stats
         # hp, str, mag, skl, spd, lck, def, res, con, mov
-        bases = class_dict[klass]['bases'][:] # Using copies    
-        growths = class_dict[klass]['growths'][:] # Using copies
+        cur_class = class_dict.get(klass)
+        if not cur_class:  # Fallback to Citizen class
+            klass = 'Citizen'
+        cur_class = class_dict.get(klass)
+        if not cur_class:
+            raise KeyError("Must have Citizen class! Do not delete Citizen class!")
+        bases = cur_class['bases'][:] # Using copies    
+        growths = cur_class['growths'][:] # Using copies
 
         # ignoring modify stats for now
         # bases = [sum(x) for x in zip(bases, gameStateObj.modify_stats['enemy_bases'])]
@@ -322,7 +339,7 @@ class UnitData(object):
 
         stats, growth_points = self.auto_level(bases, growths, level)
         # Make sure we don't exceed max
-        stats = [Utility.clamp(stat, 0, class_dict[klass]['max'][index]) for index, stat in enumerate(stats)]
+        stats = [Utility.clamp(stat, 0, cur_class['max'][index]) for index, stat in enumerate(stats)]
 
         # Handle items
         if item_line:
@@ -332,7 +349,7 @@ class UnitData(object):
         items = [item for item in items if item]  # Remove Nones
 
         # Handle required wexp
-        wexp = class_dict[klass]['wexp_gain'][:]
+        wexp = cur_class['wexp_gain'][:]
         # print(klass, wexp)
         for item in items:
             if item.weapon:
@@ -366,7 +383,7 @@ class UnitData(object):
         return stats, growth_points
 
 # This allows for drawing the units items to the right of the unit on the list menu
-class ItemDelegate(QtGui.QStyledItemDelegate):
+class ItemDelegate(QStyledItemDelegate):
     def __init__(self, unit_data=None, rein=False):
         super(ItemDelegate, self).__init__()
         self.unit_data = unit_data
@@ -383,10 +400,10 @@ class ItemDelegate(QtGui.QStyledItemDelegate):
             rect = option.rect
             painter.drawImage(rect.right() - ((idx + 1) * 16), rect.center().y() - 8, EditorUtilities.create_image(image))
 
-class UnitMenu(QtGui.QWidget):
+class UnitMenu(QWidget):
     def __init__(self, unit_data, view, window):
         super(UnitMenu, self).__init__(window)
-        self.grid = QtGui.QGridLayout()
+        self.grid = QGridLayout()
         self.setLayout(self.grid)
         self.window = window
         self.view = view
@@ -396,7 +413,7 @@ class UnitMenu(QtGui.QWidget):
         self.list = DragAndDropSignalList(self, del_func=self.remove_unit)
         self.list.setMinimumSize(128, 320)
         self.list.uniformItemSizes = True
-        self.list.setIconSize(QtCore.QSize(32, 32))
+        self.list.setIconSize(QSize(32, 32))
         self.delegate = ItemDelegate(unit_data)
         self.list.setItemDelegate(self.delegate)
         self.list.itemMoved.connect(self.drag_unit)
@@ -404,14 +421,14 @@ class UnitMenu(QtGui.QWidget):
         self.load(unit_data)
         self.list.currentItemChanged.connect(self.center_on_unit)
         self.list.itemDoubleClicked.connect(self.modify_unit)
-        # delete_key = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.list)
-        # self.connect(delete_key, QtCore.SIGNAL('activated()'), self.remove_unit)
+        # delete_key = QShortcut(QKeySequence(Qt.Key_Delete), self.list)
+        # self.connect(delete_key, SIGNAL('activated()'), self.remove_unit)
 
-        self.load_unit_button = QtGui.QPushButton('Load Unit')
+        self.load_unit_button = QPushButton('Load Unit')
         self.load_unit_button.clicked.connect(self.load_unit)
-        self.create_unit_button = QtGui.QPushButton('Create Unit')
+        self.create_unit_button = QPushButton('Create Unit')
         self.create_unit_button.clicked.connect(self.create_unit)
-        self.remove_unit_button = QtGui.QPushButton('Remove Unit')
+        self.remove_unit_button = QPushButton('Remove Unit')
         self.remove_unit_button.clicked.connect(self.remove_unit)
 
         self.grid.addWidget(self.list, 2, 0)
@@ -425,13 +442,13 @@ class UnitMenu(QtGui.QWidget):
     #     self.view.tool = 'Units'
 
     def create_mode_view_box(self):
-        self.mode_view_label = QtGui.QLabel("Current Mode:")
+        self.mode_view_label = QLabel("Current Mode:")
         names = [mode['name'] for mode in GC.DIFFICULTYDATA.values()]
-        self.mode_view_combobox = QtGui.QComboBox()
+        self.mode_view_combobox = QComboBox()
         for name in names:
             self.mode_view_combobox.addItem(name)
 
-        hbox = QtGui.QHBoxLayout()
+        hbox = QHBoxLayout()
         hbox.addWidget(self.mode_view_label)
         hbox.addWidget(self.mode_view_combobox)
         self.grid.addLayout(hbox, 0, 0)
@@ -443,7 +460,7 @@ class UnitMenu(QtGui.QWidget):
         return self.list.item(self.list.currentRow())
 
     def get_current_unit(self):
-        if self.unit_data.units:
+        if self.unit_data.units and self.list.currentRow() >= 0:
             return self.unit_data.units[self.list.currentRow()]
         else:
             return None
@@ -454,13 +471,21 @@ class UnitMenu(QtGui.QWidget):
     def set_current_idx(self, idx):
         self.list.setCurrentRow(idx)
 
-    def center_on_unit(self, item, prev):
+    def center_on_unit(self, item, prev=None):
         idx = self.list.row(item)
+        if self.unit_data.units:
         # idx = int(idx)
-        unit = self.unit_data.units[idx]
+            unit = self.unit_data.units[idx]
+            if unit.position:
+                current_mode = str(self.mode_view_combobox.currentText())
+                if unit.mode and current_mode not in unit.mode:
+                    EditorUtilities.setComboBox(self.mode_view_combobox, unit.mode[0])
+                self.view.center_on_pos(unit.position)
+
+    def center(self, unit):
         if unit.position:
             current_mode = str(self.mode_view_combobox.currentText())
-            if current_mode not in unit.mode:
+            if unit.mode and current_mode not in unit.mode:
                 EditorUtilities.setComboBox(self.mode_view_combobox, unit.mode[0])
             self.view.center_on_pos(unit.position)
 
@@ -476,14 +501,14 @@ class UnitMenu(QtGui.QWidget):
 
     def create_item(self, unit):
         if unit.generic:
-            item = QtGui.QListWidgetItem(str(unit.klass) + ': L' + str(unit.level))
+            item = QListWidgetItem(str(unit.klass) + ': L' + str(unit.level))
         else:
-            item = QtGui.QListWidgetItem(unit.id)
+            item = QListWidgetItem(unit.id)
         klass = Data.class_data.get(unit.klass)
         if klass:
             item.setIcon(EditorUtilities.create_icon(klass.get_image(unit.team, unit.gender)))
         if not unit.position:
-            item.setTextColor(QtGui.QColor("red"))
+            item.setForeground(QColor("red"))
         return item
 
     def load_unit(self):
@@ -506,7 +531,7 @@ class UnitMenu(QtGui.QWidget):
                 self.window.update_view()
         else:
             # Show pop-up
-            QtGui.QMessageBox.critical(self, "No Faction!", "Must create at least one faction to create a generic unit!")
+            QMessageBox.critical(self, "No Faction!", "Must create at least one faction to create a generic unit!")
 
     def remove_unit(self):
         unit_idx = self.list.currentRow()
@@ -555,16 +580,16 @@ class ReinforcementMenu(UnitMenu):
         self.delegate = ItemDelegate(unit_data, rein=True)
         self.list.setItemDelegate(self.delegate)
 
-        self.pack_view_label = QtGui.QLabel("Group to display:")
-        self.pack_view_combobox = QtGui.QComboBox()
+        self.pack_view_label = QLabel("Group to display:")
+        self.pack_view_combobox = QComboBox()
         self.packs = []
 
-        hbox = QtGui.QHBoxLayout()
+        hbox = QHBoxLayout()
         hbox.addWidget(self.pack_view_label)
         hbox.addWidget(self.pack_view_combobox)
         self.grid.addLayout(hbox, 1, 0)
 
-        self.duplicate_group_button = QtGui.QPushButton('Duplicate Group')
+        self.duplicate_group_button = QPushButton('Duplicate Group')
         self.duplicate_group_button.clicked.connect(self.duplicate_current_pack)
         self.grid.addWidget(self.duplicate_group_button, 5, 0)
 
@@ -574,8 +599,9 @@ class ReinforcementMenu(UnitMenu):
     #     self.view.tool = 'Reinforcements'
 
     def get_current_unit(self):
-        if self.unit_data.reinforcements:
-            return self.unit_data.reinforcements[self.list.currentRow()]
+        if self.unit_data.reinforcements and self.list.currentRow() >= 0:
+            rein = self.unit_data.reinforcements[self.list.currentRow()]
+            return rein
         else:
             return None
 
@@ -588,7 +614,7 @@ class ReinforcementMenu(UnitMenu):
         unit = self.unit_data.reinforcements[idx]
         if unit.position:
             current_mode = str(self.mode_view_combobox.currentText())
-            if current_mode not in unit.mode:
+            if unit.mode and current_mode not in unit.mode:
                 EditorUtilities.setComboBox(self.mode_view_combobox, unit.mode[0])
             EditorUtilities.setComboBox(self.pack_view_combobox, unit.pack)
             self.view.center_on_pos(unit.position)
@@ -606,14 +632,14 @@ class ReinforcementMenu(UnitMenu):
 
     def create_item(self, unit):
         if unit.generic:
-            item = QtGui.QListWidgetItem(unit.pack + '_' + str(unit.event_id) + ' -- L' + str(unit.level))
+            item = QListWidgetItem(unit.pack + '_' + str(unit.event_id) + ' -- L' + str(unit.level))
         else:
-            item = QtGui.QListWidgetItem(unit.pack + '_' + str(unit.event_id) + ' -- ' + unit.name)
+            item = QListWidgetItem(unit.pack + '_' + str(unit.event_id) + ' -- ' + unit.id)
         klass = Data.class_data.get(unit.klass)
         if klass:
             item.setIcon(EditorUtilities.create_icon(klass.get_image(unit.team, unit.gender)))
         if not unit.position:
-            item.setTextColor(QtGui.QColor("red"))
+            item.setForeground(QColor("red"))
         if unit.pack not in self.packs:
             self.packs.append(unit.pack)
             self.pack_view_combobox.addItem(unit.pack)
@@ -640,28 +666,29 @@ class ReinforcementMenu(UnitMenu):
                 self.window.update_view()
         else:
             # Show pop-up
-            QtGui.QErrorMessage().showMessage("Must create at least one faction to use generic units!")
+            QErrorMessage().showMessage("Must create at least one faction to use generic units!")
 
     def remove_unit(self):
         unit_idx = self.list.currentRow()
         self.list.takeItem(unit_idx)
         unit = self.unit_data.reinforcements[unit_idx]
-        self.check_remove_pack(unit)
         self.unit_data.remove_reinforcement_from_idx(unit_idx)
+        self.check_remove_pack(unit.pack)
         self.window.update_view()
 
-    def check_remove_pack(self, unit):
-        if unit.pack:
-            for rein in self.unit_data.reinforcements:
-                if unit.pack == rein.pack:
-                    break
-            else:
-                # Remove pack from pack combo
-                self.pack_view_combobox.removeItem(unit.pack)
+    def check_remove_pack(self, old_pack):
+        for rein in self.unit_data.reinforcements:
+            if rein.pack == old_pack:
+                break
+        else:
+            # Remove pack from pack combo
+            idx = self.pack_view_combobox.findText(old_pack)
+            self.pack_view_combobox.removeItem(idx)
 
     def modify_unit(self, item):
         idx = self.list.row(item)
         unit = self.unit_data.reinforcements[idx]
+        old_pack = unit.pack
         if unit.generic:
             modified_unit, ok = UnitDialogs.ReinCreateUnitDialog.getUnit(self, "Create Reinforcement", "Enter values for reinforcement:", unit)
         else:
@@ -670,11 +697,11 @@ class ReinforcementMenu(UnitMenu):
             modified_unit.position = unit.position
             # Replace unit
             self.list.takeItem(idx)
-            self.check_remove_pack(unit)
             item = self.create_item(modified_unit)
             self.list.insertItem(idx, item)
             self.list.setCurrentRow(self.list.row(item))
             self.unit_data.replace_reinforcement(idx, modified_unit)
+            self.check_remove_pack(old_pack)
             if modified_unit.generic:
                 self.last_touched_generic = modified_unit
             print(idx, self.list.row(item))
@@ -690,7 +717,7 @@ class ReinforcementMenu(UnitMenu):
 
     def duplicate_current_pack(self):
         current_pack = self.current_pack()  # Need to be saved since it changes within this function's for loop
-        new_name, ok = QtGui.QInputDialog.getText(self, "Duplicate Group", 'Enter name of duplicated group:',
+        new_name, ok = QInputDialog.getText(self, "Duplicate Group", 'Enter name of duplicated group:',
                                                   text=current_pack if current_pack else "")
         if ok:
             if not any(rein.pack == new_name for rein in self.unit_data.reinforcements):
@@ -707,7 +734,7 @@ class ReinforcementMenu(UnitMenu):
                 self.window.update_view()
             else:
                 # Show pop-up
-                QtGui.QErrorMessage().showMessage("Must use new name for duplicated group!")
+                QErrorMessage().showMessage("Must use new name for duplicated group!")
 
     def tick(self, current_time):
         if GC.PASSIVESPRITECOUNTER.update(current_time):

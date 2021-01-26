@@ -44,6 +44,33 @@ def convert_positions(gameStateObj, attacker, atk_position, position, item):
     logger.debug('Main Defender: %s, Splash: %s', main_defender, splash_units)
     return main_defender, splash_units
 
+def get_battle_anim(unit, item, distance) -> bool:
+    magic = False
+    if item:
+        magic = item.is_magic()
+        if magic and item.magic_at_range and distance <= 1:
+            magic = False
+    anim = GC.ANIMDICT.partake(unit.klass, unit.gender, item, magic, distance)
+    if not anim:
+        return False
+    # Build animation
+    script = anim['script']
+    color = Utility.get_color(unit.team)
+    name = None
+    if unit.id in anim['images']:
+        name = unit.id
+        frame_dir = anim['images'][name]
+    elif unit.name in anim['images']:
+        name = unit.name
+        frame_dir = anim['images'][name]
+    elif 'Generic' + color in anim['images']:
+        name = 'Generic' + color
+        frame_dir = anim['images'][name]
+    else:  # Just a map combat
+        return False
+    unit.battle_anim = BattleAnimation.BattleAnimation(unit, frame_dir, script, name, item)
+    return True
+
 def start_combat(gameStateObj, attacker, defender, def_pos, splash, item, 
                  skill_used=None, event_combat=None, ai_combat=False, 
                  toggle_anim=False, arena=False):
@@ -58,51 +85,9 @@ def start_combat(gameStateObj, attacker, defender, def_pos, splash, item,
         # XOR below and ALWAYS use animations with the arena
         if arena or animation_wanted(attacker, defender) != toggle_anim:
             distance = Utility.calculate_distance(attacker.position, def_pos)
-            magic = item.is_magic()
-            if magic and item.magic_at_range and distance <= 1:
-                magic = False
-            attacker_anim = GC.ANIMDICT.partake(attacker.klass, attacker.gender, item, magic, distance)
-            defender_item = defender.getMainWeapon()
-            if defender_item:
-                magic = defender_item.is_magic()
-                # Not magic animation at close combat for a magic at range item
-                if magic and defender_item.magic_at_range and distance <= 1:
-                    magic = False
-            else:
-                magic = False
-            defender_anim = GC.ANIMDICT.partake(defender.klass, defender.gender, defender.getMainWeapon(), magic, distance)
+            attacker_anim = get_battle_anim(attacker, item, distance)
+            defender_anim = get_battle_anim(defender, defender.getMainWeapon(), distance)
             if attacker_anim and defender_anim:
-                # Build attacker animation
-                attacker_script = attacker_anim['script']
-                attacker_color = Utility.get_color(attacker.team)
-                name = None
-                if attacker.id in attacker_anim['images']:
-                    name = attacker.id
-                    attacker_frame_dir = attacker_anim['images'][name]
-                elif attacker.name in attacker_anim['images']:
-                    name = attacker.name
-                    attacker_frame_dir = attacker_anim['images'][name]
-                elif 'Generic' + attacker_color in attacker_anim['images']:
-                    name = 'Generic' + attacker_color
-                    attacker_frame_dir = attacker_anim['images'][name]
-                else:  # Just a map combat
-                    return MapCombat(attacker, defender, def_pos, splash, item, skill_used, event_combat, arena)
-                attacker.battle_anim = BattleAnimation.BattleAnimation(attacker, attacker_frame_dir, attacker_script, name, item)
-                # Build defender animation
-                defender_script = defender_anim['script']
-                defender_color = Utility.get_color(defender.team)
-                if defender.id in defender_anim['images']:
-                    name = defender.id
-                    defender_frame_dir = defender_anim['images'][name]
-                elif defender.name in defender_anim['images']:
-                    name = defender.name
-                    defender_frame_dir = defender_anim['images'][name]
-                elif 'Generic' + defender_color in defender_anim['images']:
-                    name = 'Generic' + defender_color
-                    defender_frame_dir = defender_anim['images'][name]
-                else:
-                    return MapCombat(attacker, defender, def_pos, splash, item, skill_used, event_combat, arena)
-                defender.battle_anim = BattleAnimation.BattleAnimation(defender, defender_frame_dir, defender_script, name, defender.getMainWeapon())
                 return AnimationCombat(attacker, defender, def_pos, item, skill_used, event_combat, ai_combat, arena)
     # default
     return MapCombat(attacker, defender, def_pos, splash, item, skill_used, event_combat, arena)
@@ -133,43 +118,88 @@ class Combat(object):
 
     def _apply_result(self, result, gameStateObj):
         # Status
-        for status_obj in result.def_status:
-            status_obj.giver_id = result.attacker.id
-            Action.do(Action.AddStatus(result.defender, status_obj), gameStateObj)
-            self._handle_reflect(result.attacker, result.defender, status_obj, gameStateObj)
-        for status_obj in result.atk_status:
-            status_obj.giver_id = result.defender.id
-            Action.do(Action.AddStatus(result.attacker, status_obj), gameStateObj)
-            self._handle_reflect(result.defender, result.attacker, status_obj, gameStateObj)
+        if isinstance(result.defender, UnitObject.UnitObject) and 'immune' not in result.defender.status_bundle:
+            for status_obj in result.def_status:
+                status_obj.giver_id = result.attacker.id
+                Action.do(Action.AddStatus(result.defender, status_obj), gameStateObj)
+                self._handle_reflect(result.attacker, result.defender, status_obj, gameStateObj)
+        if 'immune' not in result.attacker.status_bundle:
+            for status_obj in result.atk_status:
+                status_obj.giver_id = result.defender.id
+                Action.do(Action.AddStatus(result.attacker, status_obj), gameStateObj)
+                self._handle_reflect(result.defender, result.attacker, status_obj, gameStateObj)
         # Calculate true damage done
         self.calc_damage_done(result)
         # HP
         Action.do(Action.ChangeHP(result.attacker, -result.atk_damage), gameStateObj)
         if result.defender:
-            Action.do(Action.ChangeHP(result.defender, -result.def_damage), gameStateObj)
+            if isinstance(result.defender, UnitObject.UnitObject):
+                Action.do(Action.ChangeHP(result.defender, -result.def_damage), gameStateObj)
+            else:  # TileObject
+                Action.do(Action.ChangeTileHP(result.defender.position, -result.def_damage), gameStateObj)
+
+    def handle_unusable_items(self, gameStateObj):
+        if self.item.c_uses and self.item.c_uses.uses <= 0:
+            Action.do(Action.UnequipItem(self.p1, self.item), gameStateObj)
+        if self.p2 and self.p2_item and self.p2_item.c_uses and self.p2_item.c_uses.uses <= 0:
+            Action.do(Action.UnequipItem(self.p2, self.p2_item), gameStateObj)
+        if self.item.cooldown and not self.item.cooldown.charged:
+            Action.do(Action.UnequipItem(self.p1, self.item), gameStateObj)
+        if self.p2 and self.p2_item and self.p2_item.cooldown and not self.p2_item.cooldown.charged:
+            Action.do(Action.UnequipItem(self.p2, self.p2_item), gameStateObj)
 
     def find_broken_items(self):
         # Handle items that were used
         a_broke_item, d_broke_item = False, False
         if self.item.uses and self.item.uses.uses <= 0:
             a_broke_item = True
-        if self.p2 and self.p2.getMainWeapon() and self.p2.getMainWeapon().uses and self.p2.getMainWeapon().uses.uses <= 0:
+        if self.p2 and self.p2_item and self.p2_item.uses and self.p2_item.uses.uses <= 0:
             d_broke_item = True
         return a_broke_item, d_broke_item
 
     def remove_broken_items(self, a_broke_item, d_broke_item, gameStateObj):
         if a_broke_item:
             Action.do(Action.RemoveItem(self.p1, self.item), gameStateObj)
+            gameStateObj.boundary_manager.recalculate_unit(self.p1, gameStateObj)
         if d_broke_item:
-            Action.do(Action.RemoveItem(self.p2, self.p2.getMainWeapon()), gameStateObj)
+            Action.do(Action.RemoveItem(self.p2, self.p2_item), gameStateObj)
+            gameStateObj.boundary_manager.recalculate_unit(self.p2, gameStateObj)
 
     def summon_broken_item_banner(self, a_broke_item, d_broke_item, gameStateObj):
         if a_broke_item and self.p1.team == 'player' and not self.p1.isDying:
             gameStateObj.banners.append(Banner.brokenItemBanner(self.p1, self.item))
             gameStateObj.stateMachine.changeState('itemgain')
         if d_broke_item and self.p2.team == 'player' and not self.p2.isDying:
-            gameStateObj.banners.append(Banner.brokenItemBanner(self.p2, self.p2.getMainWeapon()))
+            gameStateObj.banners.append(Banner.brokenItemBanner(self.p2, self.p2_item))
             gameStateObj.stateMachine.changeState('itemgain')
+
+    def handle_fatigue(self, results, gameStateObj):
+        if cf.CONSTANTS['fatigue'] in (1, 2, 3) and not self.event_combat:
+            if self.item:
+                fatigue_gain = self._compute_fatigue(self.p1, self.item, gameStateObj)
+                if cf.CONSTANTS['fatigue'] == 2:
+                    for result in results:
+                        if self.p1 is result.attacker:
+                            Action.do(Action.ChangeFatigue(self.p1, fatigue_gain), gameStateObj)
+                else:
+                    Action.do(Action.ChangeFatigue(self.p1, fatigue_gain), gameStateObj)
+            if self.p2 and self.p2_item and self.p2 is not self.p1:
+                fatigue_gain = self._compute_fatigue(self.p2, self.p2_item, gameStateObj)
+                if cf.CONSTANTS['fatigue'] == 2:
+                    for result in results:
+                        if self.p2 is result.attacker:
+                            Action.do(Action.ChangeFatigue(self.p2, fatigue_gain), gameStateObj)
+                else:
+                    Action.do(Action.ChangeFatigue(self.p2, 1), gameStateObj)
+            if cf.CONSTANTS['fatigue'] == 1:
+                for splash in self.splash:
+                    Action.do(Action.ChangeFatigue(splash, 1), gameStateObj)
+
+    def _compute_fatigue(self, unit, item, gameStateObj):
+        if cf.CONSTANTS['fatigue'] in (1, 2) and (item.weapon or item.spell):
+            return item.fatigue or 1
+        else:
+            return item.fatigue or 0
 
     def handle_wexp(self, results, item, gameStateObj):
         if not cf.CONSTANTS['miss_wexp']:  # If miss wexp is not on, only include hits
@@ -190,26 +220,33 @@ class Combat(object):
     def calc_init_exp_p1(self, my_exp, other_unit, applicable_results):
         p1_klass = ClassData.class_dict[self.p1.klass]
         other_unit_klass = ClassData.class_dict[other_unit.klass]
-        exp_multiplier = p1_klass['exp_multiplier']*other_unit_klass['exp_when_attacked']
+        exp_multiplier = p1_klass['exp_multiplier']
+
+        for status in self.p1.status_effects:
+            if status.exp_multiplier:
+                exp_multiplier *= float(status.exp_multiplier)
 
         damage, healing, kills = 0, 0, 0
 
         damage_done = sum([result.def_damage_done for result in applicable_results])
-        if not self.item.heal:
+        
+        if self.item.heal:
+            healing += damage_done
+        else:
             damage += damage_done
 
         if self.item.exp:
             normal_exp = int(self.item.exp)
         elif self.item.weapon or not self.p1.checkIfAlly(other_unit):
             level_diff = other_unit.get_internal_level() - self.p1.get_internal_level() + cf.CONSTANTS['exp_offset']
-            normal_exp = int(exp_multiplier*cf.CONSTANTS['exp_magnitude']*math.exp(level_diff*cf.CONSTANTS['exp_curve']))
+            exp_mult = exp_multiplier*other_unit_klass['exp_when_attacked']
+            normal_exp = int(exp_mult*cf.CONSTANTS['exp_magnitude']*math.exp(level_diff*cf.CONSTANTS['exp_curve']))
         elif self.item.spell:
             if self.item.heal:
                 # Amount healed - exp drops off linearly based on level. But minimum is 5 exp
-                healing += damage_done
-                normal_exp = max(5, int(p1_klass['exp_multiplier']*cf.CONSTANTS['heal_curve']*(damage_done-self.p1.get_internal_level()) + cf.CONSTANTS['heal_magnitude']))
+                normal_exp = max(5, int(exp_multiplier*cf.CONSTANTS['heal_curve']*(damage_done-self.p1.get_internal_level()) + cf.CONSTANTS['heal_magnitude']))
             else: # Status (Fly, Mage Shield, etc.)
-                normal_exp = int(p1_klass['exp_multiplier']*cf.CONSTANTS['status_exp'])
+                normal_exp = int(exp_multiplier*cf.CONSTANTS['status_exp'])
         else:
             normal_exp = 0
             
@@ -229,6 +266,9 @@ class Combat(object):
         p2_klass = ClassData.class_dict[self.p2.klass]
         other_unit_klass = ClassData.class_dict[self.p1.klass]
         exp_multiplier = p2_klass['exp_multiplier']*other_unit_klass['exp_when_attacked']
+        for status in self.p2.status_effects:
+            if status.exp_multiplier:
+                exp_multiplier *= float(status.exp_multiplier)
 
         damage, healing, kills = 0, 0, 0
 
@@ -267,7 +307,11 @@ class Combat(object):
             if unit.isDying and isinstance(unit, UnitObject.UnitObject):
                 # Check for arena miracle
                 if self.arena and unit.team == 'player' and not cf.CONSTANTS['arena_death']:
-                    Action.do(Action.Miracle(unit), gameStateObj)
+                    Action.execute(Action.Miracle(unit), gameStateObj)
+                    if self.arena == 'arena_base':
+                        # Doesn't count as a fight if you lose
+                        gameStateObj.level_constants['_' + str(unit.id) + '_arena_uses'] -= 1
+                        
                 # check for regular miracle
                 elif any(status.miracle and (not status.count or status.count.count > 0) for status in unit.status_effects):
                     Action.do(Action.Miracle(unit), gameStateObj)
@@ -284,7 +328,7 @@ class Combat(object):
                         elif self.p2:
                             Action.do(Action.DropItem(self.p2, item), gameStateObj)
 
-        if self.arena and self.p2.currenthp <= 0:
+        if self.arena and self.p2.currenthp <= 0 and gameStateObj.level_constants['_wager'] > 0:
             action = Action.GiveGold(gameStateObj.level_constants['_wager']*2, gameStateObj.current_party)
             Action.do(action, gameStateObj)
 
@@ -297,6 +341,9 @@ class Combat(object):
             if self.p1.team == 'player':
                 # Check if this is an ai controlled player
                 if gameStateObj.stateMachine.getPreviousState() == 'ai':
+                    pass
+                elif self.arena == 'arena_base':
+                    # gameStateObj.stateMachine.changeState('base_arena_choice')
                     pass
                 elif not self.p1.hasAttacked:
                     gameStateObj.stateMachine.changeState('menu')
@@ -311,30 +358,44 @@ class Combat(object):
         for status in self.p1.status_effects:
             if status.status_after_battle and not (self.p1.isDying and status.tether):
                 for unit in [self.p2] + self.splash:
-                    if isinstance(unit, UnitObject.UnitObject) and self.p1.checkIfEnemy(self.p2) and not unit.isDying:
+                    if isinstance(unit, UnitObject.UnitObject) and self.p1.checkIfEnemy(self.p2) and not unit.isDying and 'immune' not in unit.status_bundle:
                         applied_status = StatusCatalog.statusparser(status.status_after_battle, gameStateObj)
                         if status.tether:
                             Action.do(Action.TetherStatus(status, applied_status, self.p1, unit), gameStateObj)
                         Action.do(Action.AddStatus(unit, applied_status), gameStateObj)
             if status.status_after_help and not self.p1.isDying:
                 for unit in [self.p2] + self.splash:
-                    if isinstance(unit, UnitObject.UnitObject) and self.p1.checkIfAlly(unit) and not unit.isDying:
+                    if isinstance(unit, UnitObject.UnitObject) and self.p1.checkIfAlly(unit) and not unit.isDying and 'immune' not in unit.status_bundle:
                         applied_status = StatusCatalog.statusparser(status.status_after_help, gameStateObj)
                         Action.do(Action.AddStatus(unit, applied_status), gameStateObj)
             if status.lost_on_attack and (self.item.weapon or self.item.detrimental):
                 Action.do(Action.RemoveStatus(self.p1, status), gameStateObj)
             elif status.lost_on_interact and (self.item.weapon or self.item.spell):
                 Action.do(Action.RemoveStatus(self.p1, status), gameStateObj)
-        if self.p2 and isinstance(self.p2, UnitObject.UnitObject) and self.p2.checkIfEnemy(self.p1) and not self.p1.isDying:
+            if status.gain_status_after_attack and not self.p1.isDying:
+                applied_status = StatusCatalog.statusparser(status.gain_status_after_attack, gameStateObj)
+                Action.do(Action.AddStatus(self.p1, applied_status), gameStateObj)
+            if status.gain_status_after_kill and not self.p1.isDying:
+                if any(unit.isDying for unit in [self.p2] + self.splash if isinstance(unit, UnitObject.UnitObject) and self.p1.checkIfEnemy(unit)):
+                    applied_status = StatusCatalog.statusparser(status.gain_status_after_kill, gameStateObj)
+                    Action.do(Action.AddStatus(self.p1, applied_status), gameStateObj)
+            if status.gain_status_after_active_kill and not self.p1.isDying:
+                if any(unit.isDying for unit in [self.p2] + self.splash if isinstance(unit, UnitObject.UnitObject) and self.p1.checkIfEnemy(unit)):
+                    applied_status = StatusCatalog.statusparser(status.gain_status_after_active_kill, gameStateObj)
+                    Action.do(Action.AddStatus(self.p1, applied_status), gameStateObj)
+        if self.p2 and isinstance(self.p2, UnitObject.UnitObject) and self.p2.checkIfEnemy(self.p1):
             for status in self.p2.status_effects:
-                if status.status_after_battle and not (status.tether and self.p2.isDying):
+                if status.status_after_battle and not self.p1.isDying and not (status.tether and self.p2.isDying) and 'immune' not in self.p1.status_bundle: 
                     applied_status = StatusCatalog.statusparser(status.status_after_battle, gameStateObj)
                     if status.tether:
                         Action.do(Action.TetherStatus(status, applied_status, self.p2, self.p1), gameStateObj)
                     Action.do(Action.AddStatus(self.p1, applied_status), gameStateObj)
+                if status.gain_status_after_kill and not self.p2.isDying and self.p1.isDying and self.p2.checkIfEnemy(self.p1):
+                    applied_status = StatusCatalog.statusparser(status.gain_status_after_kill, gameStateObj)
+                    Action.do(Action.AddStatus(self.p2, applied_status), gameStateObj)
 
     def handle_supports(self, all_units, gameStateObj):
-        if gameStateObj.support and cf.CONSTANTS['support']:
+        if gameStateObj.support and cf.CONSTANTS['support'] and self.arena != 'arena_base':
             gameStateObj.support.check_interact(self.p1, all_units, gameStateObj)
             if not self.p1.isDying:
                 gameStateObj.support.end_combat(self.p1, gameStateObj)
@@ -365,13 +426,19 @@ class Combat(object):
     def arena_cleanup(self, gameStateObj):
         # Remove non-player characters from the game permanently
         if self.arena:
+            if self.arena == 'arena_base':
+                if self.p1.position == (0, 0):
+                    self.p1.position = None
+                if self.solver.total_rounds == 0 and self.p2.currenthp > 0:  # Arena was cancelled
+                    # Doesn't count as a fight if you leave
+                    gameStateObj.level_constants['_' + str(self.p1.id) + '_arena_uses'] -= 1
             # self.p2.position = None
             self.p2.dead = True  # Forget about this unit permanently!
             Action.execute(Action.LeaveMap(self.p2), gameStateObj)
             # Reset player 1's position now that we've removed his fighter
             Action.execute(Action.SimpleMove(self.p1, self.p1.position), gameStateObj)
 
-    def arena_stop(self):
+    def arena_stop(self, gameStateObj):
         if self.arena:
             # Set the solvers total rounds low
             # self.arena_cancelled = True
@@ -416,11 +483,12 @@ class AnimationCombat(Combat):
             self.left_item = self.left.getMainWeapon()
         self.def_pos = def_pos
         if arena:
-            distance = 1
+            self.distance = 1
         else:
-            distance = Utility.calculate_distance(self.p1.position, self.p2.position)
-        self.at_range = distance - 1 if distance > 1 else 0 
+            self.distance = Utility.calculate_distance(self.p1.position, self.p2.position)
+        self.at_range = self.distance - 1 if self.distance > 1 else 0 
         self.item = item
+        self.p2_item = self.p2.getMainWeapon()
         self.skill_used = skill_used
         self.event_combat = event_combat
         self.ai_combat = ai_combat
@@ -434,10 +502,7 @@ class AnimationCombat(Combat):
         self.left_hp_bar, self.right_hp_bar = SimpleHPBar(self.left), SimpleHPBar(self.right)
 
         self.combat_state = 'Start' # Start, Fade, Entrance, (Pre_Init, Anim, HP_Change, Anim), (Init, Anim, Hp_Change, Anim)
-
-        # Since AnimationCombat always has exactly 2 participants
-        self.p1.lock_active()
-        self.p2.lock_active()
+        self.skip = False
 
         # For fade to black viewbox
         self.viewbox_clamp_state = 0
@@ -493,6 +558,9 @@ class AnimationCombat(Combat):
         self.skill_icons = []
         self.proc_effects = []
         self.proc_wait = 0
+
+        # For music
+        self.music_fade_in = None
 
         # To match MapCombat
         self.health_bars = {self.left: self.left_hp_bar, self.right: self.right_hp_bar}
@@ -551,11 +619,10 @@ class AnimationCombat(Combat):
         self.left_platform = GC.IMAGESDICT[left_platform_type + suffix].copy()
         self.right_platform = Engine.flip_horiz(GC.IMAGESDICT[right_platform_type + suffix].copy())
 
-    def update(self, gameStateObj, metaDataObj, skip=False):
+    def update(self, gameStateObj, metaDataObj):
         # logger.debug(self.combat_state)
         current_time = Engine.get_time()
         if self.combat_state == 'Start':
-
             self.current_result = self.solver.get_a_result(gameStateObj, metaDataObj)
             self.next_result = None
             self.set_stats(gameStateObj)
@@ -564,11 +631,13 @@ class AnimationCombat(Combat):
             gameStateObj.cursor.setPosition(self.def_pos, gameStateObj)
             self.p1.sprite.change_state('combat_attacker', gameStateObj)
             self.p2.sprite.change_state('combat_defender', gameStateObj)
-            if not skip:
+            if not self.skip:
                 gameStateObj.stateMachine.changeState('move_camera')
 
             self.init_draw(gameStateObj, metaDataObj)
-            if self.arena:
+            if self.arena == 'arena_base':
+                self.combat_state = 'ArenaFromBase'
+            elif self.arena:
                 self.combat_state = 'Fade'
             elif self.ai_combat:
                 self.combat_state = 'RedOverlay_Init'
@@ -581,14 +650,25 @@ class AnimationCombat(Combat):
             self.combat_state = 'RedOverlay'
 
         elif self.combat_state == 'RedOverlay':
-            if skip or current_time - self.last_update > 400:
+            if self.skip or current_time - self.last_update > 400:
                 gameStateObj.cursor.drawState = 0
                 gameStateObj.highlight_manager.remove_highlights()
                 self.combat_state = 'Fade'
 
+        elif self.combat_state == 'ArenaFromBase':
+            self.viewbox_clamp_state = self.total_viewbox_clamp_states
+            self.build_viewbox(gameStateObj)
+            self.combat_state = 'Entrance'
+            left_pos = (self.left.position[0] - gameStateObj.cameraOffset.get_x()) * GC.TILEWIDTH, \
+                (self.left.position[1] - gameStateObj.cameraOffset.get_y()) * GC.TILEHEIGHT
+            right_pos = (self.right.position[0] - gameStateObj.cameraOffset.get_x()) * GC.TILEWIDTH, \
+                (self.right.position[1] - gameStateObj.cameraOffset.get_y()) * GC.TILEHEIGHT
+            self.left.battle_anim.awake(self, self.right.battle_anim, False, self.at_range, self.max_position_offset, left_pos) # Stand
+            self.right.battle_anim.awake(self, self.left.battle_anim, True, self.at_range, self.max_position_offset, right_pos) # Stand
+
         elif self.combat_state == 'Fade':
             # begin viewbox clamping
-            if skip:
+            if self.skip:
                 self.viewbox_clamp_state = self.total_viewbox_clamp_states
                 self.build_viewbox(gameStateObj)
             self.viewbox_clamp_state += 1
@@ -609,19 +689,15 @@ class AnimationCombat(Combat):
             # Translate in names, stats, hp, and platforms
             self.bar_offset += 1
             self.name_offset += 1
-            if skip or self.bar_offset >= self.max_position_offset:
+            if self.skip or self.bar_offset >= self.max_position_offset:
                 self.bar_offset = self.max_position_offset
                 self.name_offset = self.max_position_offset
                 self.last_update = current_time
                 self.combat_state = 'Pre_Init'
-                # Start Battle Music
-                if self.p1.team in ('player', 'other') and gameStateObj.phase_music.player_battle_music:
-                    Engine.music_thread.fade_in(gameStateObj.phase_music.player_battle_music)
-                elif gameStateObj.phase_music.enemy_battle_music:
-                    Engine.music_thread.fade_in(gameStateObj.phase_music.enemy_battle_music)
+                self.start_battle_music(gameStateObj)
 
         elif self.combat_state == 'Pre_Init':
-            if skip or current_time - self.last_update > 410: # 25 frames
+            if self.skip or current_time - self.last_update > 410: # 25 frames
                 self.last_update = current_time
                 if self.left_item and self.left_item.transform and self.left.battle_anim.has_pose('Transform'):
                     self.left.battle_anim.start_anim('Transform')
@@ -726,7 +802,7 @@ class AnimationCombat(Combat):
                 self.move_camera()
 
         elif self.combat_state == 'ExpWait':
-            if skip or current_time - self.last_update > 450:
+            if self.skip or current_time - self.last_update > 450:
                 self.handle_exp(gameStateObj)
                 self.combat_state = 'Exp'
 
@@ -736,27 +812,27 @@ class AnimationCombat(Combat):
             self.combat_state = 'OutWait'
 
         elif self.combat_state == 'OutWait':
-            if skip or current_time - self.last_update > 820:
+            if self.skip or current_time - self.last_update > 820:
                 self.p1.battle_anim.finish()
                 self.p2.battle_anim.finish()
                 self.combat_state = 'Out1'
 
         elif self.combat_state == 'Out1': # Nametags move out
             self.name_offset -= 1
-            if skip or self.name_offset <= 0:
+            if self.skip or self.name_offset <= 0:
                 self.name_offset = 0
                 self.combat_state = 'Out2'
 
         elif self.combat_state == 'Out2': # Rest of the goods move out
             self.bar_offset -= 1
-            if skip or self.bar_offset <= 0:
+            if self.skip or self.bar_offset <= 0:
                 self.bar_offset = 0
                 self.combat_state = 'FadeOut'
                 self.arena_cleanup(gameStateObj) 
 
         elif self.combat_state == 'FadeOut':
             # end viewbox clamping
-            if skip:
+            if self.skip:
                 self.viewbox_clamp_state = 0
                 self.build_viewbox(gameStateObj)
             self.viewbox_clamp_state -= 1
@@ -768,8 +844,8 @@ class AnimationCombat(Combat):
                 self.end_skip()
                 return True
 
-        self.left_hp_bar.update(skip or self.combat_state == 'Exp')
-        self.right_hp_bar.update(skip or self.combat_state == 'Exp')
+        self.left_hp_bar.update(self.skip or self.combat_state == 'Exp')
+        self.right_hp_bar.update(self.skip or self.combat_state == 'Exp')
         if self.left.battle_anim:
             self.left.battle_anim.update()
         if self.right.battle_anim:
@@ -787,10 +863,12 @@ class AnimationCombat(Combat):
             if self.platform_current_shake > len(self.platform_shake_set):
                 self.platform_current_shake = 0
 
-    def skip(self):
+    def start_skip(self):
+        self.skip = True
         BattleAnimation.speed = 0.25
 
     def end_skip(self):
+        self.skip = False
         BattleAnimation.speed = 1
 
     def start_hit(self, sound=True, miss=False):
@@ -808,7 +886,7 @@ class AnimationCombat(Combat):
 
     def start_damage_num_animation(self, result):
         def build_numbers(damage, left):
-            str_damage = str(abs(damage))
+            str_damage = str(min(999, abs(damage)))
             for idx, num in enumerate(str_damage):
                 if result.outcome == 2 and damage > 0:  # Crit
                     d = GUIObjects.DamageNumber(int(num), idx, len(str_damage), left, 'Yellow')
@@ -855,11 +933,25 @@ class AnimationCombat(Combat):
         vb_height = GC.WINHEIGHT - vb_y - (vb_multiplier * (GC.TILEY - true_y)) * GC.TILEHEIGHT
         self.viewbox = (vb_x, vb_y, vb_width, vb_height)
 
+    def start_battle_music(self, gameStateObj):
+        # Start Battle Music
+        ditem = self.p2_item
+        if self.item.battle_music and GC.MUSICDICT.get(self.item.battle_music):
+            item_music = GC.MUSICDICT.get(self.item.battle_music)
+            self.music_fade_in = Engine.music_thread.fade_in(item_music)
+        elif ditem and ditem.battle_music and GC.MUSICDICT.get(ditem.battle_music):
+            item_music = GC.MUSICDICT.get(ditem.battle_music)
+            self.music_fade_in = Engine.music_thread.fade_in(item_music)
+        elif self.p1.team in ('player', 'other') and gameStateObj.phase_music.player_battle_music:
+            self.music_fade_in = Engine.music_thread.fade_in(gameStateObj.phase_music.player_battle_music)
+        elif gameStateObj.phase_music.enemy_battle_music:
+            self.music_fade_in = Engine.music_thread.fade_in(gameStateObj.phase_music.enemy_battle_music)
+
     def set_stats(self, gameStateObj):
         result = self.current_result
         # Calc stats
         a_mode = 'Attack' if result.attacker is self.p1 else 'Defense'
-        a_weapon = self.item if result.attacker is self.p1 else result.attacker.getMainWeapon()
+        a_weapon = self.item if result.attacker is self.p1 else self.p2_item
         a_hit = result.attacker.compute_hit(result.defender, gameStateObj, a_weapon, a_mode)
         a_mt = result.attacker.compute_damage(result.defender, gameStateObj, a_weapon, a_mode)
         if cf.CONSTANTS['crit']:
@@ -870,7 +962,7 @@ class AnimationCombat(Combat):
 
         if self.item.weapon and self.solver.defender_can_counterattack():
             d_mode = 'Defense' if result.attacker is self.p1 else 'Attack'
-            d_weapon = result.defender.getMainWeapon()
+            d_weapon = self.p2_item if result.attacker is self.p1 else self.item
             d_hit = result.defender.compute_hit(result.attacker, gameStateObj, d_weapon, d_mode)
             d_mt = result.defender.compute_damage(result.attacker, gameStateObj, d_weapon, d_mode)
             if cf.CONSTANTS['crit']:
@@ -892,6 +984,13 @@ class AnimationCombat(Combat):
 
     def apply_result(self, result, gameStateObj, metaDataObj):
         self._apply_result(result, gameStateObj)
+        # Sometimes this can cause the need to spawn a new battle animation
+        if not self.left.battle_anim:
+            get_battle_anim(self.left, self.left_item, self.distance)
+            self.left.battle_anim.awake(self, self.right.battle_anim, False, self.at_range) # Stand
+        if not self.right.battle_anim:
+            get_battle_anim(self.right, self.right_item, self.distance)
+            self.right.battle_anim.awake(self, self.left.battle_anim, True, self.at_range) # Stand
 
         # Get next result in preparation for next combat
         self.next_result = self.solver.get_a_result(gameStateObj, metaDataObj)
@@ -900,7 +999,7 @@ class AnimationCombat(Combat):
         if result.adept_proc and self.combat_state not in ("AdeptProcSkill", "AttackProcSkill", "DefenseProcSkill"):
             self.combat_state = "AdeptProcSkill"
             self.set_up_proc_animation(result.attacker, result.adept_proc)
-        elif result.attacker_proc_used and self.combat_state not in ("AdeptProcSkill", "DefenseProcSkill"):
+        elif result.attacker_proc_used and self.combat_state not in ("AttackProcSkill", "DefenseProcSkill"):
             self.combat_state = 'AttackProcSkill'
             self.set_up_proc_animation(result.attacker, result.attacker_proc_used)
         elif result.defender_proc_used and self.combat_state != "DefenseProcSkill":
@@ -950,12 +1049,8 @@ class AnimationCombat(Combat):
         self.skill_icons.append(GUIObjects.SkillIcon(skill, unit == self.right))
 
     def finish(self, gameStateObj):
-        self.p1.unlock_active()
-        self.p2.unlock_active()
         # fade back music IF AND ONLY IF it was faded in!
-        if self.p1.team in ('player', 'other') and gameStateObj.phase_music.player_battle_music:
-            Engine.music_thread.fade_back()
-        elif gameStateObj.phase_music.enemy_battle_music:
+        if self.music_fade_in:
             Engine.music_thread.fade_back()
 
     def shake(self, num):
@@ -1204,7 +1299,7 @@ class AnimationCombat(Combat):
                 # WEXP and Skills
                 if defender_results:
                     Action.do(Action.ChargeAllSkills(self.p2), gameStateObj)
-                    self.handle_wexp(defender_results, self.p2.getMainWeapon(), gameStateObj)
+                    self.handle_wexp(defender_results, self.p2_item, gameStateObj)
                 # Exp and Records
                 if self.p2.team == 'player' and not self.p2.isSummon():
                     my_exp, records = self.calc_init_exp_p2(defender_results)
@@ -1237,11 +1332,10 @@ class AnimationCombat(Combat):
 
         a_broke_item, d_broke_item = self.find_broken_items()
 
-        # Handle skills that were used
-        self.handle_skill_used(gameStateObj)
-
         # Create all_units list
-        all_units = [self.p1, self.p2]
+        all_units = [self.p1]
+        if self.p2 is not self.p1:
+            all_units.append(self.p2)
 
         # Handle death and sprite changing
         self.check_death()
@@ -1271,9 +1365,15 @@ class AnimationCombat(Combat):
 
         self.handle_supports(all_units, gameStateObj)
 
+        self.handle_fatigue(self.old_results, gameStateObj)
+
+        # Handle skills that were used
+        self.handle_skill_used(gameStateObj)
+
         self.handle_death(gameStateObj, metaDataObj, all_units)
 
         # Actually remove items
+        self.handle_unusable_items(gameStateObj)
         self.remove_broken_items(a_broke_item, d_broke_item, gameStateObj)
 
 class SimpleHPBar(object):
@@ -1317,7 +1417,7 @@ class SimpleHPBar(object):
         return self.is_done
 
     def draw(self, surf, pos):
-        t_hp = int(self.true_hp)
+        t_hp = max(int(self.true_hp), 0)
         # Blit HP -- Must be blit every frame
         font = GC.FONT['number_small2']
         top = pos[1] - 4
@@ -1331,35 +1431,26 @@ class SimpleHPBar(object):
             position = pos[0] - font.size('??')[0], top
             font.blit('??', surf, position)
         full_hp_blip = Engine.subsurface(self.full_hp_blip, (self.colors[self.color_tick] * 2, 0, 2, self.full_hp_blip.get_height()))
-        if self.max_hp > 80:
-            # First 40 hp
-            for index in range(40):
-                surf.blit(full_hp_blip, (pos[0] + index * 2 + 5, pos[1] + 4))
-            surf.blit(self.end_hp_blip, (pos[0] + 40 * 2 + 5, pos[1] + 4)) # End HP Blip
-            # Second 40 hp
-            for index in range(40):
-                surf.blit(full_hp_blip, (pos[0] + index * 2 + 5, pos[1] - 4))
-            surf.blit(self.end_hp_blip, (pos[0] + 40 * 2 + 5, pos[1] - 4)) # End HP Blip
-        elif self.max_hp <= 40:
+        if self.max_hp <= 40:
             for index in range(t_hp):
                 surf.blit(full_hp_blip, (pos[0] + index * 2 + 5, pos[1] + 1))
             for index in range(self.max_hp - t_hp):
                 surf.blit(self.empty_hp_blip, (pos[0] + (index + t_hp) * 2 + 5, pos[1] + 1))
             surf.blit(self.end_hp_blip, (pos[0] + (self.max_hp) * 2 + 5, pos[1] + 1)) # End HP Blip
         else:
-            # First 40 hp
+            # Lower 40 hp  
             for index in range(min(t_hp, 40)):
                 surf.blit(full_hp_blip, (pos[0] + index * 2 + 5, pos[1] + 4))
-            if t_hp < 40:
-                for index in range(40 - t_hp):
-                    surf.blit(self.empty_hp_blip, (pos[0] + (index + t_hp) * 2 + 5, pos[1] + 4))
+            for index in range(max(40 - t_hp, 0)):
+                surf.blit(self.empty_hp_blip, (pos[0] + (index + t_hp) * 2 + 5, pos[1] + 4))
             surf.blit(self.end_hp_blip, (pos[0] + (40) * 2 + 5, pos[1] + 4)) # End HP Blip
-            # Second 40 hp
-            for index in range(max(0, t_hp - 40)):
+            # Upper 40 hp
+            for index in range(Utility.clamp(t_hp - 40, 0, 40)):
                 surf.blit(full_hp_blip, (pos[0] + index * 2 + 5, pos[1] - 4))
-            for index in range(self.max_hp - max(40, t_hp)):
+            right = Utility.clamp(self.max_hp, 0, 80)
+            for index in range(right - max(40, t_hp)):
                 surf.blit(self.empty_hp_blip, (pos[0] + (index + max(t_hp - 40, 0)) * 2 + 5, pos[1] - 4))
-            surf.blit(self.end_hp_blip, (pos[0] + (self.max_hp - 40) * 2 + 5, pos[1] - 4)) # End HP Blip
+            surf.blit(self.end_hp_blip, (pos[0] + (right - 40) * 2 + 5, pos[1] - 4)) # End HP Blip
 
 class MapCombat(Combat):
     def __init__(self, attacker, defender, def_pos, splash, item, skill_used, 
@@ -1369,6 +1460,7 @@ class MapCombat(Combat):
         self.def_pos = def_pos
         self.splash = splash
         self.item = item
+        self.p2_item = self.p2.getMainWeapon() if self.p2 else None
         self.skill_used = skill_used
         self.event_combat = event_combat
         self.arena = arena
@@ -1383,6 +1475,7 @@ class MapCombat(Combat):
         self.length_of_combat = 2000
         self.additional_time = 0
         self.combat_state = 'Pre_Init'
+        self.skip = False
         self.aoe_anim_flag = False # Have we shown the aoe animation yet?
 
         self.damage_numbers = []
@@ -1390,7 +1483,7 @@ class MapCombat(Combat):
 
         self.health_bars = {}
 
-    def update(self, gameStateObj, metaDataObj, skip=False):
+    def update(self, gameStateObj, metaDataObj):
         def add_skill_icon(unit, skill):
             if unit in self.health_bars:
                 hp_bar = self.health_bars[unit]
@@ -1450,7 +1543,7 @@ class MapCombat(Combat):
                 for unit in self.splash:
                     if isinstance(unit, UnitObject.UnitObject):
                         unit.sprite.change_state('combat_defender', gameStateObj)
-                if not skip:
+                if not self.skip:
                     gameStateObj.stateMachine.changeState('move_camera')
                 self.combat_state = 'Init1'
 
@@ -1472,7 +1565,7 @@ class MapCombat(Combat):
                         add_skill_icon(result.attacker, result.adept_proc)
                         
             elif self.combat_state == 'Init':
-                if skip or current_time > self.length_of_combat // 5 + self.additional_time:
+                if self.skip or current_time > self.length_of_combat // 5 + self.additional_time:
                     gameStateObj.cursor.drawState = 0
                     gameStateObj.highlight_manager.remove_highlights()
 
@@ -1495,20 +1588,22 @@ class MapCombat(Combat):
                     self.combat_state = '2'
 
             elif self.combat_state == '2':
-                if skip or current_time > 2 * self.length_of_combat // 5 + self.additional_time:
+                if self.skip or current_time > 2 * self.length_of_combat // 5 + self.additional_time:
                     self.combat_state = 'Anim'
                     if self.results[0].attacker.sprite.state in {'combat_attacker', 'combat_defender'}:
                         self.results[0].attacker.sprite.change_state('combat_anim', gameStateObj)
                     for result in self.results:
                         if result.attacker is self.p1:
                             item = self.item
+                        elif result.attacker is self.p2:
+                            item = self.p2_item
                         else:
                             item = result.attacker.getMainWeapon()
                         if item.sfx_on_cast and item.sfx_on_cast in GC.SOUNDDICT:
                             GC.SOUNDDICT[item.sfx_on_cast].play()
 
             elif self.combat_state == 'Anim':
-                if skip or current_time > 3 * self.length_of_combat // 5 + self.additional_time:
+                if self.skip or current_time > 3 * self.length_of_combat // 5 + self.additional_time:
                     if self.results[0].attacker.sprite.state == 'combat_anim':
                         self.results[0].attacker.sprite.change_state('combat_attacker', gameStateObj)
                     for result in self.results:
@@ -1521,11 +1616,11 @@ class MapCombat(Combat):
                     self.combat_state = 'Clean'
 
             elif self.combat_state == 'Clean':
-                if skip or current_time > (3 * self.length_of_combat // 5) + self.additional_time:
+                if self.skip or current_time > (3 * self.length_of_combat // 5) + self.additional_time:
                     self.combat_state = 'Wait'
 
             elif self.combat_state == 'Wait': 
-                if skip or current_time > (4 * self.length_of_combat // 5) + self.additional_time:
+                if self.skip or current_time > (4 * self.length_of_combat // 5) + self.additional_time:
                     self.end_phase(gameStateObj)
                     self.old_results += self.results
                     self.results = []
@@ -1540,6 +1635,8 @@ class MapCombat(Combat):
         if result.outcome:
             if result.attacker is self.p1:
                 item = self.item
+            elif result.attacker is self.p2:
+                item = self.p2_item
             else:
                 item = result.attacker.getMainWeapon()
             if isinstance(result.defender, UnitObject.UnitObject):
@@ -1621,10 +1718,10 @@ class MapCombat(Combat):
 
     def start_damage_num_animation(self, result):
         damage = result.def_damage
-        str_damage = str(abs(damage))
+        str_damage = str(min(999, abs(damage)))
         left = result.defender.position
         for idx, num in enumerate(str_damage):
-            if result.outcome == 2:  # Crit
+            if result.outcome == 2 and result.def_damage > 0:  # Crit
                 d = GUIObjects.DamageNumber(int(num), idx, len(str_damage), left, 'SmallYellow')
                 self.damage_numbers.append(d)
             elif result.def_damage < 0:
@@ -1634,24 +1731,44 @@ class MapCombat(Combat):
                 d = GUIObjects.DamageNumber(int(num), idx, len(str_damage), left, 'SmallRed')
                 self.damage_numbers.append(d)
 
-    def skip(self):
+    def start_skip(self):
+        self.skip = True
         self.p1.sprite.reset_sprite_offset()
         if self.p2 and isinstance(self.p2, UnitObject.UnitObject):
             self.p2.sprite.reset_sprite_offset()
+
+    def end_skip(self):
+        self.skip = False
 
     def apply_result(self, result, gameStateObj):
         self._apply_result(result, gameStateObj)
         def_pos = result.defender.position
         atk_pos = result.attacker.position
-        # Movement
-        if result.atk_movement and def_pos:
-            result.attacker.handle_forced_movement(def_pos, result.atk_movement, gameStateObj)
-        if result.def_movement:
-            result.defender.handle_forced_movement(atk_pos, result.def_movement, gameStateObj, self.def_pos)
+        # Handle Swap Movement!!!
+        if result.atk_movement and result.def_movement and def_pos and \
+                isinstance(result.defender, UnitObject.UnitObject) and \
+                result.atk_movement.mode == "Swap" and result.def_movement.mode == "Swap" and \
+                'grounded' not in result.attacker.status_bundle and \
+                'grounded' not in result.defender.status_bundle: 
+            Action.do(Action.SwapMovement(result.attacker, result.defender), gameStateObj)
+        else:
+            if result.atk_movement and def_pos and 'grounded' not in result.attacker.status_bundle:
+                result.attacker.handle_forced_movement(def_pos, result.atk_movement, gameStateObj)
+            if isinstance(result.defender, UnitObject.UnitObject) and result.def_movement and \
+                    'grounded' not in result.defender.status_bundle:
+                result.defender.handle_forced_movement(atk_pos, result.def_movement, gameStateObj, self.def_pos)
         # Summoning
         if result.summoning:
             result.summoning.sprite.set_transition('warp_in')
             gameStateObj.allunits.append(result.summoning)
+            Action.do(Action.SimpleArrive(result.summoning, result.summoning.position), gameStateObj)
+        if self.item.call_item_script:
+            call_item_script = 'Data/callItemScript.txt'
+            if os.path.isfile(call_item_script):
+                self.end_skip()
+                scene = Dialogue.Dialogue_Scene(call_item_script, unit=self.p1, unit2=self.item, tile_pos=self.p1.position)
+                gameStateObj.message.append(scene)
+                gameStateObj.stateMachine.changeState('dialogue')
 
     def begin_phase(self, gameStateObj):
         players = set()
@@ -1661,14 +1778,24 @@ class MapCombat(Combat):
 
             # Calc stats
             a_mode = 'Attack' if result.attacker is self.p1 else 'Defense'
-            a_weapon = self.item if result.attacker is self.p1 else result.attacker.getMainWeapon()
+            if result.attacker is self.p1:
+                a_weapon = self.item
+            elif result.attacker is self.p2:
+                a_weapon = self.p2_item
+            else:
+                a_weapon = self.result.attacker.getMainWeapon()
             a_hit = result.attacker.compute_hit(result.defender, gameStateObj, a_weapon, a_mode)
             a_mt = result.attacker.compute_damage(result.defender, gameStateObj, a_weapon, a_mode)
             a_stats = a_hit, a_mt
 
             if self.p2 in (result.attacker, result.defender) and self.item.weapon and self.solver.defender_can_counterattack():
                 d_mode = 'Defense' if result.attacker is self.p1 else 'Attack'
-                d_weapon = result.defender.getMainWeapon()
+                if result.defender is self.p1:
+                    d_weapon = self.item
+                elif result.defender is self.p2:
+                    d_weapon = self.p2_item
+                else:
+                    d_weapon = result.defender.getMainWeapon()
                 d_hit = result.defender.compute_hit(result.attacker, gameStateObj, d_weapon, d_mode)
                 d_mt = result.defender.compute_damage(result.attacker, gameStateObj, d_weapon, d_mode)
                 d_stats = d_hit, d_mt
@@ -1701,10 +1828,6 @@ class MapCombat(Combat):
                     a_stats = a_stats if result.attacker.team != result.defender.team else None
                     defender_hp = HealthBar.HealthBar('splash', result.defender, None, other=result.attacker, stats=a_stats, swap_stats=swap_stats)
                     self.health_bars[result.defender] = defender_hp
-            
-        # Small state changes
-        for player in players:
-            player.lock_active()
 
     # Clean up combat phase
     def end_phase(self, gameStateObj):
@@ -1712,9 +1835,6 @@ class MapCombat(Combat):
         for result in self.results:
             players.add(result.attacker)
             players.add(result.defender)
-        # Small state changes
-        for player in players:
-            player.unlock_active()
         self.additional_time = 0
 
     def draw(self, surf, gameStateObj):
@@ -1764,12 +1884,9 @@ class MapCombat(Combat):
 
         a_broke_item, d_broke_item = self.find_broken_items()
 
-        # Handle skills that were used
-        self.handle_skill_used(gameStateObj)
-
         # Create all_units list
         all_units = [unit for unit in self.splash] + [self.p1]
-        if self.p2: 
+        if self.p2 and self.p2 is not self.p1: 
             all_units += [self.p2]
 
         # Handle death and sprite changing
@@ -1835,7 +1952,7 @@ class MapCombat(Combat):
                 # WEXP and Skills
                 if defender_results:
                     Action.do(Action.ChargeAllSkills(self.p2), gameStateObj)
-                    self.handle_wexp(defender_results, self.p2.getMainWeapon(), gameStateObj)
+                    self.handle_wexp(defender_results, self.p2_item, gameStateObj)
                 # EXP and Records
                 if self.p2.team == 'player' and not self.p2.isSummon():  
                     my_exp, records = self.calc_init_exp_p2(defender_results)
@@ -1849,8 +1966,14 @@ class MapCombat(Combat):
 
         self.handle_supports(all_units, gameStateObj)
 
+        self.handle_fatigue(self.old_results, gameStateObj)
+
+        # Handle skills that were used
+        self.handle_skill_used(gameStateObj)
+
         self.arena_cleanup(gameStateObj)
         self.handle_death(gameStateObj, metaDataObj, all_units)
 
         # Actually remove items
+        self.handle_unusable_items(gameStateObj)
         self.remove_broken_items(a_broke_item, d_broke_item, gameStateObj)

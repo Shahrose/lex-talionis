@@ -84,6 +84,80 @@ def get_save_title(save_slots):
     colors = [get_color(save_slot.mode_id) for save_slot in save_slots]
     return options, colors
 
+TITLE_SCRIPT = False
+
+class TitleDialogue(StateMachine.State):
+    name = 'title_dialogue'
+
+    def __init__(self, name='title_dialogue'):
+        StateMachine.State.__init__(self, name)
+        self.message = None
+        self.text_speed_change = MenuFunctions.BriefPopUpDisplay((GC.WINWIDTH, GC.WINHEIGHT - 16))
+        self.hurry_up_time = 0
+
+    def begin(self, gameStateObj, metaDataObj):
+        logger.info('Begin Title Dialogue State')
+        if gameStateObj.message:
+            self.message = gameStateObj.message[-1]
+        if self.message:
+            self.message.current_state = "Processing"
+
+    def take_input(self, eventList, gameStateObj, metaDataObj):
+        event = gameStateObj.input_manager.process_input(eventList)
+
+        if (event == 'START' or event == 'BACK') and self.message and not self.message.do_skip: # SKIP
+            GC.SOUNDDICT['Select 4'].play()
+            self.message.skip()
+
+        elif event == 'SELECT' or event == 'RIGHT' or event == 'DOWN': # Get it to move along...
+            if self.message.current_state == "Displaying" and self.message.dialog:
+                last_hit = Engine.get_time() - self.hurry_up_time
+                if last_hit > 200:  # How long it will pause before moving on to next section
+                    if self.message.dialog[-1].waiting:
+                        GC.SOUNDDICT['Select 1'].play()
+                        self.message.dialog_unpause()
+                        self.hurry_up_time = 0
+                    else:
+                        self.message.dialog[-1].hurry_up()
+                        self.hurry_up_time = Engine.get_time()
+
+        elif event == 'AUX':  # Increment the text speed to be faster
+            if cf.OPTIONS['Text Speed'] in cf.text_speed_options:
+                GC.SOUNDDICT['Select 4'].play()
+                current_index = cf.text_speed_options.index(cf.OPTIONS['Text Speed'])
+                current_index += 1
+                if current_index >= len(cf.text_speed_options):
+                    current_index = 0
+                cf.OPTIONS['Text Speed'] = cf.text_speed_options[current_index]
+                self.text_speed_change.start('Changed Text Speed!')
+
+    def end_dialogue_state(self, gameStateObj, metaDataObj):
+        logger.debug('Ending dialogue state')
+        last_message = None
+        if self.message and gameStateObj.message:
+            gameStateObj.message.pop()
+        logger.info('Repeat Dialogue State!')
+        return 'repeat'
+
+    def update(self, gameStateObj, metaDataObj):
+        if self.message:
+            self.message.update(gameStateObj, metaDataObj)
+        else:
+            logger.info('Done with Dialogue State!')
+            gameStateObj.stateMachine.back()
+            return 'repeat'
+
+        if self.message.done and self.message.current_state == "Processing":
+            gameStateObj.stateMachine.back()
+            return self.end_dialogue_state(gameStateObj, metaDataObj)
+
+    def draw(self, gameStateObj, metaDataObj):
+        mapSurf = gameStateObj.generic_surf
+        if self.message:
+            self.message.draw(mapSurf)
+        self.text_speed_change.draw(mapSurf)
+        return mapSurf
+
 class StartStart(StateMachine.State):
     name = 'start_start'
 
@@ -95,7 +169,10 @@ class StartStart(StateMachine.State):
             gameStateObj.press_start = MenuFunctions.Logo(GC.IMAGESDICT['PressStart'], (GC.WINWIDTH//2, 4*GC.WINHEIGHT//5))
             gameStateObj.title_bg = Background.MovieBackground('title_background')
             bounds = (-GC.WINHEIGHT, GC.WINWIDTH, GC.WINHEIGHT, GC.WINHEIGHT+16)
-            gameStateObj.title_particles = Weather.Weather('Smoke', .075, bounds, (GC.TILEX, GC.TILEY))
+            if cf.CONSTANTS['title_particles'] in Weather.WEATHER_CATALOG:
+                gameStateObj.title_particles = Weather.Weather(cf.CONSTANTS['title_particles'], .075, bounds, (GC.TILEX, GC.TILEY))
+            else:
+                gameStateObj.title_particles = None
             # Wait until saving thread has finished
             if hasattr(gameStateObj, 'saving_thread'):
                 gameStateObj.saving_thread.join()
@@ -105,9 +182,21 @@ class StartStart(StateMachine.State):
             # Start music
             Engine.music_thread.fade_in(GC.MUSICDICT[cf.CONSTANTS.get('music_main')])
 
+            # Play title script if it exists
+            title_script_name = 'Data/titleScript.txt'
+            global TITLE_SCRIPT
+            if os.path.exists(title_script_name) and \
+                    not TITLE_SCRIPT:
+                gameStateObj.build_new()
+                TITLE_SCRIPT = True
+                title_script = Dialogue.Dialogue_Scene(title_script_name)
+                gameStateObj.message.append(title_script)
+                gameStateObj.stateMachine.changeState('title_dialogue')
+
             # Transition in:
-            gameStateObj.stateMachine.changeState("transition_in")
-            return 'repeat'
+            else:
+                gameStateObj.stateMachine.changeState("transition_in")
+                return 'repeat'
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
@@ -118,6 +207,7 @@ class StartStart(StateMachine.State):
             gameStateObj.set_generic_mode()
             gameStateObj.save_slot = 'DEBUG'
             gameStateObj.game_constants['level'] = 'DEBUG'
+            # static_random.set_seed(0)
             levelfolder = 'Data/Level' + str(gameStateObj.game_constants['level'])
             if not os.path.exists(levelfolder):
                 return
@@ -164,8 +254,9 @@ class StartStart(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         gameStateObj.button_a.draw(surf)
         gameStateObj.button_b.draw(surf)
         # gameStateObj.logo.draw(surf)
@@ -308,8 +399,9 @@ class StartOption(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         gameStateObj.button_a.draw(surf)
         gameStateObj.button_b.draw(surf)
         if self.menu:
@@ -400,8 +492,9 @@ class StartLoad(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         if gameStateObj.activeMenu:
             gameStateObj.activeMenu.draw(surf, center=[self.position_x, GC.WINHEIGHT/2])
         surf.blit(self.title_surf, (self.title_pos[0], self.title_pos[1] + self.rel_title_pos_y))
@@ -571,7 +664,7 @@ class StartPreloadedLevels(StartLoad):
             self.build_new_game(preloaded_level, gameStateObj, metaDataObj)
 
     def build_new_game(self, level, gameStateObj, metaDataObj):
-        import ItemMethods, StatusCatalog, Action
+        from . import ItemMethods, StatusCatalog, Action
         gameStateObj.build_new() # Make the gameStateObj ready for a new game
 
         levelfolder = 'Data/Level' + str(level['name'])
@@ -584,7 +677,7 @@ class StartPreloadedLevels(StartLoad):
             gameStateObj.game_constants['level'] = int(gameStateObj.game_constants['level'])
         except ValueError:  # That's fine just keep going
             pass
-        for key, value in level['game_constants'].iteritems():
+        for key, value in level['game_constants'].items():
             gameStateObj.game_constants[key] = value
         static_random.set_seed(gameStateObj.game_constants.get('_random_seed', 0))
 
@@ -747,7 +840,7 @@ class StartMode(StateMachine.State):
 
         if self.state == 'difficulty_setup':
             if self.no_difficulty_choice():
-                gameStateObj.mode = GC.DIFFICULTYDATA.values()[0].copy()
+                gameStateObj.mode = list(GC.DIFFICULTYDATA.values())[0].copy()
                 self.death_choice = gameStateObj.mode['death'] == '?'
                 self.growth_choice = gameStateObj.mode['growths'] == '?'
                 self.state = 'death_setup'
@@ -856,8 +949,9 @@ class StartMode(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         if self.menu:
             self.menu.draw(surf)
             surf.blit(self.title_surf, self.title_pos)
@@ -959,8 +1053,9 @@ class StartNew(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         if gameStateObj.activeMenu:
             gameStateObj.activeMenu.draw(surf, center=[self.position_x, GC.WINHEIGHT//2])
         # selection = gameStateObj.save_slots[gameStateObj.activeMenu.getSelectionIndex()]
@@ -1080,8 +1175,9 @@ class StartExtras(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         # GC.FONT['text_white'].blit(cf.CONSTANTS['attribution'], surf, (4, GC.WINHEIGHT - 16))
         # gameStateObj.logo.draw(surf)
         gameStateObj.button_a.draw(surf)
@@ -1109,8 +1205,9 @@ class StartWait(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         if gameStateObj.activeMenu:
             currentTime = Engine.get_time()
             if hasattr(self, 'wait_time') and currentTime - self.wait_time > 100 and currentTime - self.wait_time < 200:
@@ -1140,7 +1237,10 @@ class StartSave(StateMachine.State):
             gameStateObj.button_b = Button(5, (GC.WINWIDTH - 32, GC.WINHEIGHT - 16), 'key_BACK')
             gameStateObj.title_bg = Background.MovieBackground('title_background')
             bounds = (-GC.WINHEIGHT, GC.WINWIDTH, GC.WINHEIGHT, GC.WINHEIGHT+16)
-            gameStateObj.title_particles = Weather.Weather('Smoke', .075, bounds, (GC.TILEX, GC.TILEY))
+            if cf.CONSTANTS['title_particles'] in Weather.WEATHER_CATALOG:
+                gameStateObj.title_particles = Weather.Weather(cf.CONSTANTS['title_particles'], .075, bounds, (GC.TILEX, GC.TILEY))
+            else:
+                gameStateObj.title_particles = None
             # self.time_display = TimeDisplay()
             # if not hasattr(gameStateObj, 'save_slots') or not gameStateObj.save_slots:
             gameStateObj.save_slots = load_saves()
@@ -1205,8 +1305,9 @@ class StartSave(StateMachine.State):
     def draw(self, gameStateObj, metaDataObj):
         surf = gameStateObj.generic_surf
         gameStateObj.title_bg.draw(surf)
-        gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
-        gameStateObj.title_particles.draw(surf)
+        if gameStateObj.title_particles:
+            gameStateObj.title_particles.update(Engine.get_time(), gameStateObj)
+            gameStateObj.title_particles.draw(surf)
         if gameStateObj.activeMenu:
             currentTime = Engine.get_time()
             if hasattr(self, 'wait_time') and currentTime - self.wait_time > 100 and currentTime - self.wait_time < 200:
@@ -1413,7 +1514,7 @@ class ChapterTransitionState(StateMachine.State):
 
         elif self.CTStateMachine.getState() == 'wait':
             if currentTime - self.wait_time > 5000:
-                Engine.music_thread.fade_out()
+                Engine.music_thread.fade_back()
                 self.CTStateMachine.changeState('fade_out')
 
         elif self.CTStateMachine.getState() == 'fade_out':
@@ -1496,6 +1597,7 @@ class TransitionOutState(StateMachine.State):
     # State to be draw
     # New State
     # This state
+    
     def begin(self, gameStateObj, metaDataObj):
         self.background = GC.IMAGESDICT['BlackBackground']
         self.transition = transition_max

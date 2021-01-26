@@ -33,6 +33,15 @@
         <always_animation>MapPoison,5,2,8</always_animation>
     </status>
 
+    <status name="Fatigued">
+        <id>Fatigued</id>
+        <desc>All stats lowered by 2.</desc>
+        <image_index>3,4</image_index>
+        <components>stat_change,negative</components>
+        <!-- HP, STR, MAG, SKL, SPD, LCK, DEF, RES, CON, MOV -->
+        <stat_change>0,-2,-2,-2,-2,0,-2,-2,0,0</stat_change>
+    </status>
+
     <!-- Resistant Status -->
 	<status name="Resistant">
 		<id>Resistant</id>
@@ -56,6 +65,19 @@
         <time>5</time>
         <!-- HP, STR, MAG, SKL, SPD, LCK, DEF, RES, CON, MOV -->
         <stat_change>0,0,0,0,-4,0,5,0,0,0</stat_change>
+    </status>
+
+    <!-- Stoneskin Status -->
+    <status name="Stoneskin">
+        <id>Stoneskin</id>
+        <desc>Take half damage all sources, but inflicts SPD -4.</desc>
+        <image_index>9,8</image_index>
+        <components>stat_change,time,resist_multiplier</components>
+
+        <time>5</time>
+        <resist_multiplier>0.5</resist_multiplier>
+        <!-- HP, STR, MAG, SKL, SPD, LCK, DEF, RES, CON, MOV -->
+        <stat_change>0,0,0,0,-4,0,0,0,0,0</stat_change>
     </status>
 
     <!-- Stun Status -->
@@ -172,6 +194,44 @@
 
         <!-- Animation frame data (Name of animation, x, y, total_num_frames) -->
         <always_animation>MapFrostbite,11,1,11</always_animation>
+    </status>
+
+    <status name="Bloodcrazed">
+        <id>Bloodcrazed</id>
+        <desc>Grants Stat Bonuses (testing)</desc>
+        <image_index>5,3</image_index>
+        <components>gain_status_after_kill,gain_status_after_attack,gain_status_after_active_kill,class_skill</components>
+
+        <gain_status_after_kill>Bloodcrazed_child1</gain_status_after_kill>
+        <gain_status_after_attack>Bloodcrazed_child2</gain_status_after_attack>
+        <gain_status_after_active_kill>Bloodcrazed_child3</gain_status_after_active_kill>
+    </status>
+
+    <status name="Bloodcrazed">
+        <id>Bloodcrazed_child1</id>
+        <desc>Grants +1 STR for each kill</desc>
+        <image_index>5,3</image_index>
+        <components>stat_change,lost_on_endchapter,stack</components>
+
+        <stat_change>0,1,0,0,0,0,0,0,0,0</stat_change>
+    </status>
+
+    <status name="Bloodcrazed">
+        <id>Bloodcrazed_child2</id>
+        <desc>Grants +1 SKL for each attack</desc>
+        <image_index>5,3</image_index>
+        <components>stat_change,lost_on_endchapter,stack</components>
+
+        <stat_change>0,0,0,1,0,0,0,0,0,0</stat_change>
+    </status>
+
+    <status name="Bloodcrazed">
+        <id>Bloodcrazed_child3</id>
+        <desc>Grants +1 SPD for each kill on player phase</desc>
+        <image_index>5,3</image_index>
+        <components>stat_change,lost_on_endchapter,stack</components>
+
+        <stat_change>0,0,0,0,1,0,0,0,0,0</stat_change>
     </status>
 
     <!-- FEATS -->
@@ -343,7 +403,7 @@
         <desc>Can buy items at reduced prices.</desc>
         <image_index>11,9</image_index>
         <components>buy_value_mod</components>
-        <!-- HP, STR, MAG, SKL, SPD, LCK, DEF, RES, CON, MOV -->
+
         <buy_value_mod>0.5</buy_value_mod>
     </status>
 
@@ -386,6 +446,15 @@
         <components>stat_change</components>
         <!-- HP, STR, MAG, SKL, SPD, LCK, DEF, RES, CON, MOV -->
         <stat_change>0,5,5,5,5,0,5,5,0,0</stat_change>
+    </status>
+
+    <status name="Paragon">
+        <id>Paragon</id>
+        <desc>Doubles amount of experience received in battle.</desc>
+        <image_index>10,9</image_index>
+        <components>exp_multiplier,class_skill</components>
+
+        <exp_multiplier>2</exp_multiplier>
     </status>
 
     <status name="Canto">
@@ -541,22 +610,56 @@
         <conditional_avoid>500;Utility.gt(Utility.calculate_distance(self.position, target.position), 2)</conditional_avoid>
     </status>
 
+    <status name="Rex Divinus">
+        <id>Rex_Divinus</id>
+        <image_index>10,9</image_index>
+        <desc>Immunity to statuses and forced movement.</desc>
+        <components>immune,grounded</components>
+    </status>
+
+    <status name="Rex Aurus">
+        <id>Rex_Aurus</id>
+        <image_index>10,9</image_index>
+        <desc>Able to counterattack at any range.</desc>
+        <components>distant_counter</components>
+    </status>
+
     <status name="Heavy Hitter">
         <id>Heavy Hitter</id>
         <image_index>8,1</image_index>
         <desc>Adds half weapon weight to damage.</desc>
         <components>mt,class_skill</components>
 
-        <mt>item.weight/2 if item.weight else 0</mt>
+        <mt>item.weight//2 if item.weight else 0</mt>
+    </status>
+
+    <status name="Ignis">
+        <id>Ignis</id>
+        <image_index>8,1</image_index>
+        <desc>Adds MAG/2 to physical attacks, and STR/2 to magical attacks</desc>
+        <components>mt,class_skill</components>
+
+        <mt>self.stats['STR']//2 if item.is_magic() else self.stats['MAG']//2</mt>
+    </status>
+
+    <status name="Ranger's Guile">
+        <id>Rangers Guile</id>
+        <image_index>8,1</image_index>
+        <desc>Grants +30 hit while on Plains or Forest.</desc>
+        <components>hit,class_skill</components>
+
+        <hit>30 if gameStateObj.map and self.position and gameStateObj.map.tiles[self.position].name in ('Plain', 'Forest') else 0</hit>
     </status>
 
     <status name="Charge">
         <id>Charge</id>
         <image_index>6,3</image_index>
         <desc>Adds (distance moved - 2) this turn to damage.</desc>
-        <components>mt,class_skill</components>
+        <components>conditional_mt,class_skill</components>
 
-        <mt>max(0, Utility.calculate_distance(self.position, self.previous_position) - 2) if self.position else 0</mt>
+        <conditional_mt>max(0, Utility.calculate_distance(self.position, gameStateObj.action_log.get_previous_position(self)) - 2) if self.position else 0;mode == 'Attack'</conditional_mt>
+
+        <mt></mt>
     </status>
 
     <status name="Focus">
@@ -589,6 +692,24 @@
         <avoid>30 if Utility.lt(self.currenthp, self.stats['HP']/2.) else 0</avoid>
     </status>
 
+    <status name="Resolve">
+        <id>Resolve</id>
+        <image_index>8,8</image_index>
+        <desc>Grants +50% STR, SKL, and SPD if HP is under half.</desc>
+        <components>mt,avoid,hit,attackspeed,crit,class_skill</components>
+
+        <!-- Add STR/2 to mt, so you effectively hit for STR/2 extra damage -->
+        <mt>self.stats['STR'].base_stat//2 if self.currenthp &lt;= self.stats['HP']/2. and item and not item.is_magic() else 0</mt>
+        <!-- Add SKL/2 to hit, so you effectively have SKL extra accuracy (assuming Accuracy = SKL*2 normally) -->
+        <hit>(self.stats['SKL'].base_stat//2)*2 if self.currenthp &lt;= self.stats['HP']/2. else 0</hit>
+        <!-- Add SPD/2 to avoid, so you effectively have SPD extra avoid (assuming Avoid = SPD*2 normally) -->
+        <avoid>(self.stats['SPD'].base_stat//2)*2 if self.currenthp &lt;= self.stats['HP']/2. else 0</avoid>
+        <!-- Add SPD/2 to attackspeed, so you effectivly have SPD/2 extra attackspeed -->
+        <attackspeed>self.stats['SPD'].base_stat//2 if self.currenthp &lt;= self.stats['HP']/2. else 0</attackspeed>
+        <!-- Add SKL/2 to crit, so you effectively have SKL/4 extra crit (assuming Crit Rate = SKL/2 normally) -->
+        <crit>(self.stats['SKL'].base_stat//4 if self.currenthp &lt;= self.stats['HP']/2. else 0</crit>
+    </status>
+
     <status name="Conductance">
         <id>Conductance</id>
         <image_index>4,6</image_index>
@@ -613,6 +734,22 @@
         <desc>Heal +5 HP when healing another.</desc>
         <components>caretaker,class_skill</components>
         <caretaker>5</caretaker>
+    </status>
+
+    <status name="Live to Serve">
+        <id>Live to Serve</id>
+        <image_index>2,6</image_index>
+        <desc>Heals user 50% of health restored to target.</desc>
+        <components>live_to_serve,class_skill</components>
+        <live_to_serve>0.5</live_to_serve>
+    </status>
+
+    <status name="Imbue">
+        <id>Imbue</id>
+        <image_index>2,6</image_index>
+        <desc>Heal MAG at the start of the turn.</desc>
+        <components>upkeep_damage,class_skill</components>
+        <upkeep_damage>-unit.stats['MAG']</upkeep_damage>
     </status>
 
     <status name="Vantage">
@@ -684,7 +821,7 @@
         <components>combat_art,class_skill</components>
 
         <charge_method>SKL</charge_method>
-        <charge_max>40</charge_max>
+        <charge_max>0</charge_max>
         <combat_art_status>trueshot_status</combat_art_status>
     </status>
 
@@ -692,9 +829,52 @@
         <id>trueshot_status</id>
         <image_index>5,9</image_index>
         <desc></desc>
-        <components>hit</components>
+        <components>hit,item_mod</components>
 
         <hit>100</hit>
+        <item_mod_conditional>True</item_mod_conditional>
+        <item_mod_effect_change>no_double;True</item_mod_effect_change>
+    </status>
+
+    <status name="Overdrive">
+        <id>Overdrive</id>
+        <image_index>5,9</image_index>
+        <desc>Combat Art. INFINITE POWER!!!</desc>
+        <components>activated_item,class_skill</components>
+
+        <charge_method>SKL</charge_method>
+        <charge_max>0</charge_max>
+        <activated_item>so_Overdrive</activated_item>
+    </status>
+
+    <status name="Dismount">
+        <id>Dismount</id>
+        <image_index>5,9</image_index>
+        <desc>Horse.</desc>
+        <components>activated_item,class_skill</components>
+
+        <charge_method>SKL</charge_method>
+        <charge_max>0</charge_max>
+        <activated_item>so_Dismount</activated_item>
+    </status>
+
+    <status name="INFINITE POWER!!!">
+        <id>overdrive_status</id>
+        <image_index>5,9</image_index>
+        <desc>Grants +4 STR, +4 MAG, +2 SPD</desc>
+        <components>stat_change,time</components>
+
+        <time>4</time>
+        <stat_change>0,4,4,0,2,0,0,0,0,0</stat_change>
+    </status>
+
+    <status name="Death Lotus">
+        <id>infinite_status</id>
+        <image_index>5,9</image_index>
+        <desc>Permanently lowers HP by 3</desc>
+        <components>stat_change,hidden,stack</components>
+
+        <stat_change>-3,0,0,0,0,0,0,0,0,0</stat_change>
     </status>
 
     <status name="Metamagic">
@@ -735,7 +915,7 @@
 
         <activated_item>so_Shove</activated_item>
         <check_valid_func>any([adj_unit.check_shove(unit.position, 1, gameStateObj) for adj_unit in unit.getAdjacentUnits(gameStateObj)])</check_valid_func>
-        <get_choices_func>[u.position for u in unit.getAdjacentUnits(gameStateObj)]</get_choices_func>
+        <get_choices_func>[u.position for u in unit.getAdjacentUnits(gameStateObj) if u.check_shove(unit.position, 1, gameStateObj)]</get_choices_func>
     </status>
 
     <status name="Swap">
@@ -768,7 +948,7 @@
 
         <activated_item>so_Refresh</activated_item>
         <check_valid_func>any([adj_unit.isDone() for adj_unit in unit.getTeamPartners(gameStateObj)])</check_valid_func>
-        <get_choices_func>[u.position for u in unit.getTeamPartners(gameStateObj)]</get_choices_func>
+        <get_choices_func>[u.position for u in unit.getTeamPartners(gameStateObj) if u.isDone()]</get_choices_func>
     </status>
 
     <status name="Fade">
@@ -819,6 +999,26 @@
         <charge_max>60</charge_max>
     </status>
 
+    <status name="Reinforce">
+        <id>Reinforce</id>
+        <image_index>9,0</image_index>
+        <desc>Activated. Summons four new friends.</desc>
+        <components>activated_item,class_skill</components>
+
+        <activated_item>so_Reinforce</activated_item>
+    </status>
+
+    <status name="Ballista">
+        <id>Ballista</id>
+        <image_index>9,0</image_index>
+        <desc>Use a ballista.</desc>
+        <components>activated_item</components>
+
+        <activated_item>Ballista</activated_item>
+        <check_valid_func>bool(self.get_choices(unit, gameStateObj)) and (unit.wexp[3] > 0)</check_valid_func>
+        <get_choices_func>unit.getTargets(gameStateObj, self.item)</get_choices_func>
+    </status>
+
     <status name="Summon">
         <id>Summon</id>
         <image_index>9,0</image_index>
@@ -828,14 +1028,27 @@
         <activated_item>so_Summon_1</activated_item>
         <charge_method>MAG</charge_method>
         <charge_max>60</charge_max>
-        <check_valid_func>bool(self.get_choices(unit, gameStateObj))</check_valid_func>
+        <check_valid_func>bool(self.get_choices(unit, gameStateObj)) and not any(unit.name == 'Phantom' for unit in gameStateObj.allunits if unit.position)</check_valid_func>
         <get_choices_func>[pos for pos in unit.getAdjacentPositions(gameStateObj) if not gameStateObj.grid_manager.get_unit_node(pos)]</get_choices_func>
     </status>
 
     <!-- Proc Skills -->
     <!-- These skills can activate during combat, giving the character that activates the skill a status effect that lasts until the end of that attack in combat -->
+    <!-- The activated version of Luna -->
     <status name="Luna">
         <id>Luna</id>
+        <image_index>4,3</image_index>
+        <desc>Combat Art. Ignore enemy's Defense or Resistance.</desc>
+        <components>combat_art,class_skill</components>
+
+        <charge_method>SKL</charge_method>
+        <charge_max>40</charge_max>
+        <combat_art_status>Luna_proc</combat_art_status>
+    </status>
+
+    <!-- The proc version of Luna -->
+    <status name="Luna">
+        <id>Luna2</id>
         <image_index>4,3</image_index>
         <desc>Proc. SKL%. Ignore enemy's Defense or Resistance.</desc>
         <components>attack_proc,class_skill</components>
@@ -856,10 +1069,23 @@
         <item_mod_effect_change>ignore_def;True</item_mod_effect_change>
     </status>
 
+    <!-- The activated version of Sol -->
     <status name="Sol">
         <id>Sol</id>
         <image_index>4,2</image_index>
-        <desc>Activated. Recover HP equal to damage dealt to the enemy.</desc>
+        <desc>Combat Art. Recover HP equal to damage dealt to enemy.</desc>
+        <components>combat_art,class_skill</components>
+
+        <charge_method>SKL</charge_method>
+        <charge_max>40</charge_max>
+        <combat_art_status>Sol_proc</combat_art_status>
+    </status>
+
+    <!-- The proc version of Sol -->
+    <status name="Sol">
+        <id>Sol2</id>
+        <image_index>4,2</image_index>
+        <desc>Proc. SKL%. Recover HP equal to damage dealt to enemy.</desc>
         <components>attack_proc,class_skill</components>
 
         <proc_status>Sol_proc</proc_status>
@@ -965,6 +1191,16 @@
         <charge>(unit.currenthp &gt; 25) and (static_random.get_combat() &lt; (unit.attackspeed(gameStateObj, item) - unit2.attackspeed(gameStateObj) + unit.currenthp//2))</charge>
     </status>
 
+    <!-- Example Nihil Status -->
+    <status name="Nihil">
+        <id>Nihil</id>
+        <image_index>4,3</image_index>
+        <desc>Ignore proc skills</desc>
+        <components>nihil,class_skill</components>
+
+        <nihil>All</nihil>
+    </status>
+
     <!-- Passive Item Mod Skills -->
     <!-- These skills are always active, changing how items behave if they meet the conditional -->
     <status name="Swordfaire">
@@ -1015,7 +1251,7 @@
 
         <item_mod_conditional>item.weapon</item_mod_conditional>
         <item_mod_effect_add>effective;add('Monster');remove('Monster')</item_mod_effect_add>
-        <item_mod_effect_change>effective;ItemMethods.EffectiveComponent(['Monster'], item.MT*2)</item_mod_effect_change>
+        <item_mod_effect_change>effective;ItemMethods.EffectiveComponent(['Monster'], item.weapon.MT*2)</item_mod_effect_change>
     </status>
 
     <status name="Celeste">
@@ -1159,6 +1395,15 @@
 
         <time>5</time>
         <avoid>100</avoid>
+    </status>
+
+    <status name="Controlled">
+        <id>Geas_Status</id>
+        <image_index>9,1</image_index>
+        <desc>Mind Controlled</desc>
+        <components>time,mind_control</components>
+
+        <time>5</time>
     </status>
 
     <status name="Aegis">
@@ -1334,6 +1579,16 @@
         <desc>Enemies earn no EXP from this unit.</desc>
         <image_index>10,0</image_index>
         <components>no_exp</components>
+    </status>
+
+    <status name="Cooling Pulse">
+        <id>Cooling_Pulse</id>
+        <image_index>5,6</image_index>
+        <desc>Cooldown recharge speed +1.</desc>
+        <components>item_mod,class_skill</components>
+
+        <item_mod_conditional>item.cooldown</item_mod_conditional>
+        <item_mod_effect_add>cooldown;add(1);remove(1)</item_mod_effect_add>
     </status>
 
     <!-- Event status -->

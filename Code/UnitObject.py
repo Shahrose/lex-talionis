@@ -28,7 +28,7 @@ class UnitObject(object):
         # --- Basic properties
         self.id = info['u_id']
         self.event_id = info['event_id']
-        self.position = info['position']
+        self.position = self.previous_position = info['position']
         self.name = info['name']
         self.team = info['team']
         self.party = info.get('party', 0)
@@ -71,6 +71,9 @@ class UnitObject(object):
         # --- Weapon experience points
         self.wexp = info['wexp']
 
+        # -- Fatigue
+        self.fatigue = int(info.get('fatigue', 0))
+
         # --- Item list
         self.items = []
 
@@ -79,6 +82,8 @@ class UnitObject(object):
 
         # --- Stats -- this level
         self.records = info.get('records', self.default_records())
+
+        self.portrait_id = info.get('portrait_id', self.id)
 
         # --- Other Properties (Update related normally)
         self.validPartners = [] # Used by selection algorithms
@@ -127,8 +132,8 @@ class UnitObject(object):
         self.generic_flag = False
         try:
             # Ex: HectorPortrait
-            self.bigportrait = Engine.subsurface(GC.UNITDICT[str(self.id) + 'Portrait'], (0, 0, 96, 80))
-            self.portrait = Engine.subsurface(GC.UNITDICT[str(self.id) + 'Portrait'], (96, 16, 32, 32))
+            self.bigportrait = Engine.subsurface(GC.UNITDICT[str(self.portrait_id) + 'Portrait'], (0, 0, 96, 80))
+            self.portrait = Engine.subsurface(GC.UNITDICT[str(self.portrait_id) + 'Portrait'], (96, 16, 32, 32))
         except KeyError:
             self.generic_flag = True
             self.bigportrait = GC.UNITDICT['Generic_Portrait_' + self.klass]
@@ -242,7 +247,8 @@ class UnitObject(object):
                 blit_num(surf, crit, 64, 67)
         # Blit enemy hit and mt
         if not self.getMainWeapon().cannot_be_countered and isinstance(enemyunit, UnitObject) and enemyunit.getMainWeapon() and \
-                Utility.calculate_distance(self.position, enemyunit.position) in enemyunit.getMainWeapon().get_range(enemyunit):
+                (Utility.calculate_distance(self.position, enemyunit.position) in enemyunit.getMainWeapon().get_range(enemyunit) or 
+                 'distant_counter' in enemyunit.status_bundle):
             e_mt = enemyunit.compute_damage(self, gameStateObj, enemyunit.getMainWeapon(), 'Defense')
             e_hit = enemyunit.compute_hit(self, gameStateObj, enemyunit.getMainWeapon(), 'Defense')
             if cf.CONSTANTS['crit']:
@@ -327,15 +333,17 @@ class UnitObject(object):
 
             my_num = 1
             if not my_wep.no_double:
-                if my_wep.brave:
+                if my_wep.brave or my_wep.brave_attack:
                     my_num *= 2
-                if self.outspeed(enemyunit, my_wep, gameStateObj):
+                if self.outspeed(enemyunit, my_wep, gameStateObj, "Attack"):
                     my_num *= 2
-                if my_wep.uses or my_wep.c_uses:
+                if my_wep.uses or my_wep.c_uses or my_wep.cooldown:
                     if my_wep.uses:
                         my_num = min(my_num, my_wep.uses.uses)
                     if my_wep.c_uses:
                         my_num = min(my_num, my_wep.c_uses.uses)
+                    if my_wep.cooldown and my_wep.cooldown.charged:
+                        my_num = min(my_num, my_wep.cooldown.cd_uses)
 
             if my_num == 2:
                 surf.blit(GC.IMAGESDICT['x2'], x2_position_player)
@@ -352,10 +360,10 @@ class UnitObject(object):
                 e_num = 1
                 if e_wep and not e_wep.no_double and isinstance(enemyunit, UnitObject) and \
                         Utility.calculate_distance(self.position, enemyunit.position) in e_wep.get_range(enemyunit):
-                    if e_wep.brave:
+                    if e_wep.brave or e_wep.brave_defense:
                         e_num *= 2
                     if (cf.CONSTANTS['def_double'] or 'def_double' in enemyunit.status_bundle) and \
-                            enemyunit.outspeed(self, e_wep, gameStateObj):
+                            enemyunit.outspeed(self, e_wep, gameStateObj, "Defense"):
                         e_num *= 2
                 if e_num == 2:
                     surf.blit(GC.IMAGESDICT['x2'], x2_position_enemy)
@@ -603,10 +611,10 @@ class UnitObject(object):
         return pathfinder.path
 
     def getMainWeapon(self):
-        return next((item for item in self.items if item.weapon and self.canWield(item)), None)
+        return next((item for item in self.items if item.weapon and self.canWield(item) and self.canUse(item)), None)
 
     def getMainSpell(self):
-        return next((item for item in self.items if item.spell and self.canWield(item)), None)
+        return next((item for item in self.items if item.spell and self.canWield(item) and self.canUse(item)), None)
 
     def hasRunAI(self):
         return self.hasRunGeneralAI
@@ -617,7 +625,16 @@ class UnitObject(object):
     def getWeight(self):
         return GC.EQUATIONS.get_weight(self)
 
-    def canWield(self, item):
+    def canUse(self, item) -> bool:
+        if item.uses and item.uses.uses <= 0:
+            return False
+        if item.c_uses and item.c_uses.uses <= 0:
+            return False
+        if item.cooldown and not item.cooldown.charged:
+            return False
+        return True
+
+    def canWield(self, item) -> bool:
         """
         Returns True if it can be wielded/used, and False otherwise
         Now has support for no_weapons status
@@ -627,6 +644,17 @@ class UnitObject(object):
             return False
         if item.is_magic() and 'no_magic_weapons' in self.status_bundle:
             return False
+
+        if item.class_locked:
+            if self.klass not in item.class_locked:
+                return False
+        if item.gender_locked:
+            if self.gender not in item.gender_locked:
+                return False
+        if item.tag_locked:
+            if all(tag not in item.tag_locked for tag in self.tags):
+                return False
+                
         # if the item is a weapon
         if item.weapon:
             itemLvl = item.weapon.LVL
@@ -650,7 +678,7 @@ class UnitObject(object):
         elif my_wexp > 0:
             itemLvl = itemLvl.split(',')
             for n in itemLvl:
-                if n == self.id or n == self.klass or n == self.name or n == '--':
+                if n in (self.id, self.klass, self.name, '--') or n in self.tags:
                     return True
         return False
 
@@ -704,6 +732,16 @@ class UnitObject(object):
     def tags(self, value):
         self._tags = value
 
+    def capped_stats(self) -> bool:
+        unit_klass = ClassData.class_dict[self.klass]
+        max_stats = unit_klass['max']
+        counter = 0
+        for idx, stat in enumerate(self.stats.values()):
+            if stat >= max_stats[idx]:
+                print("Capped %s %s" % (idx, stat))
+                counter += 1
+        return counter
+
     def get_internal_level(self):
         unit_klass = ClassData.class_dict[self.klass]
         return Utility.internal_level(unit_klass['tier'], self.level, cf.CONSTANTS['max_level'])
@@ -725,6 +763,8 @@ class UnitObject(object):
             return any(test)
         elif item.promotion:
             return self.can_promote_using(item)
+        elif item.target_fatigue:
+            return self.fatigue > 0
         else:
             return True
 
@@ -743,6 +783,8 @@ class UnitObject(object):
             Action.do(Action.PermanentGrowthIncrease(self, item.permanent_growth_increase), gameStateObj)
         elif item.wexp_increase:
             Action.do(Action.GainWexp(self, item.wexp_increase), gameStateObj)
+        elif item.target_fatigue:
+            Action.do(Action.ChangeFatigue(self, int(item.target_fatigue)), gameStateObj)
         elif item.promotion:
             # Action.do(Action.Promote(self), gameStateObj)
             gameStateObj.exp_gain_struct = (self, 0, None, 'item_promote')
@@ -750,7 +792,7 @@ class UnitObject(object):
         elif item.call_item_script:
             call_item_script = 'Data/callItemScript.txt'
             if os.path.isfile(call_item_script):
-                gameStateObj.message.append(Dialogue.Dialogue_Scene(call_item_script, unit=self, unit2=item))
+                gameStateObj.message.append(Dialogue.Dialogue_Scene(call_item_script, unit=self, unit2=item, tile_pos=self.position))
                 gameStateObj.stateMachine.changeState('dialogue')
 
     def handle_forced_movement(self, other_pos, movement, gameStateObj, def_pos=None):
@@ -820,20 +862,20 @@ class UnitObject(object):
                 leveling = int(gameStateObj.mode['growths'])
 
         r = static_random.get_levelup(self.id, self.level + class_info['tier'] * 100)
-
+        
         if leveling in (0, 1): # Fixed or Random
             for index in range(8):
                 growth = growths[index]
                 if leveling == 1: # Fixed
-                    levelup_list[index] = min((self.growth_points[index] + growth)//100, class_info['max'][index] - self.stats.values()[index].base_stat)
+                    levelup_list[index] = min((self.growth_points[index] + growth)//100, class_info['max'][index] - list(self.stats.values())[index].base_stat)
                     self.growth_points[index] = (self.growth_points[index] + growth)%100
                 elif leveling == 0: # Random
                     while growth > 0:
                         levelup_list[index] += 1 if r.randint(0, 99) < growth else 0
                         growth -= 100
-                    levelup_list[index] = min(levelup_list[index], class_info['max'][index] - self.stats.values()[index].base_stat)
+                    levelup_list[index] = min(levelup_list[index], class_info['max'][index] - list(self.stats.values())[index].base_stat)
         else: # Hybrid and Default
-            growths = [growth if self.stats.values()[index].base_stat < class_info['max'][index] else 0 for index, growth in enumerate(growths)]
+            growths = [growth if list(self.stats.values())[index].base_stat < class_info['max'][index] else 0 for index, growth in enumerate(growths)]
             growth_sum = sum(growths)
             num_choices = growth_sum//100
             self.growth_points[0] += growth_sum%100
@@ -847,9 +889,9 @@ class UnitObject(object):
                 index = static_random.weighted_choice(growths, r)
                 levelup_list[index] += 1
                 growths[index] = max(0, growths[index] - 100)
-                if self.stats.values()[index].base_stat + levelup_list[index] >= class_info['max'][index]:
+                if list(self.stats.values())[index].base_stat + levelup_list[index] >= class_info['max'][index]:
                     growths[index] = 0
-                                    
+
         return levelup_list
 
     # For regular levels
@@ -888,6 +930,9 @@ class UnitObject(object):
         pathfinder = AStar.Djikstra(self.position, my_grid, gameStateObj.map.width, gameStateObj.map.height, self.team, 'pass_through' in self.status_bundle)
         # Run the pathfinder
         movement_left = self.movement_left if not force else int(self.stats['MOV'])
+        # Makes ai zero move appear as zero move
+        if cf.CONSTANTS['zero_move'] and self.team != 'player' and self.ai and not self.ai.can_move():
+            movement_left = 0
         ValidMoves = pathfinder.process(gameStateObj.grid_manager.team_map, movement_left)
         # Own position is always a valid move
         ValidMoves.add(self.position)
@@ -901,13 +946,15 @@ class UnitObject(object):
     # Uses all weapons the unit has access to find its potential range
     def findPotentialRange(self, spell=False, both=False, boundary=False):
         if both:
-            allWeapons = [item for item in self.items if self.canWield(item) and (item.weapon or (item.spell and item.detrimental))]
+            allWeapons = \
+                [item for item in self.items if self.canWield(item) and 
+                 self.canUse(item) and (item.weapon or (item.spell and item.detrimental))]
         elif spell:
-            allWeapons = [item for item in self.items if item.spell and self.canWield(item)]
+            allWeapons = [item for item in self.items if item.spell and self.canWield(item) and self.canUse(item)]
             if boundary:
                 allWeapons = [item for item in self.items if item.detrimental]
         else:
-            allWeapons = [item for item in self.items if item.weapon and self.canWield(item)]
+            allWeapons = [item for item in self.items if item.weapon and self.canWield(item) and self.canUse(item)]
         if not allWeapons:
             return []
         potentialRange = []
@@ -952,7 +999,7 @@ class UnitObject(object):
         # Now filter based on types of spells I've used
         # There are three types of spells, ALLY, ENEMY, TILE
         if not boundary:
-            my_spells = [item for item in self.items if item.spell and self.canWield(item)]
+            my_spells = [item for item in self.items if item.spell and self.canWield(item) and self.canUse(item)]
             # If can only hit allies, ignore enemies
             if all(["Ally" == spell.spell.targets for spell in my_spells]):
                 enemy_unit_positions = [unit.position for unit in gameStateObj.allunits if unit.position and self.checkIfEnemy(unit)]
@@ -1060,13 +1107,13 @@ class UnitObject(object):
     def getAttacks(self, gameStateObj, weapon=None):
         # Set-up
         if self.isDone() or self.hasAttacked:
-            return [] # No valid Attacks once you have attacked
+            return [], [] # No valid Attacks once you have attacked
         if weapon:
             my_weapon = weapon
         else:
             my_weapon = self.getMainWeapon()
         if not my_weapon:
-            return [] # no valid weapon
+            return [], [] # no valid weapon
 
         # calculate legal targets for cursor
         attacks = Utility.find_manhattan_spheres(my_weapon.get_range(self), self.position)
@@ -1226,7 +1273,7 @@ class UnitObject(object):
     # Finds all valid target positions given all weapons the unit has access to, as opposed to the just
     # one weapon favored by getValidTargetPosition. Is a wrapper around getValidTargetPosition
     def getAllTargetPositions(self, gameStateObj):
-        allWeapons = [item for item in self.items if item.weapon and self.canWield(item)]
+        allWeapons = [item for item in self.items if item.weapon and self.canWield(item) and self.canUse(item)]
         if not allWeapons:
             return []
 
@@ -1240,7 +1287,7 @@ class UnitObject(object):
     # Finds all valid targets given all staves the unit has access to
     # Uses EVERY spell the unit has access to 
     def getAllSpellTargetPositions(self, gameStateObj):
-        allSpells = [item for item in self.items if item.spell and self.canWield(item)]
+        allSpells = [item for item in self.items if item.spell and self.canWield(item) and self.canUse(item)]
         if not allSpells:
             return []
 
@@ -1408,9 +1455,9 @@ class UnitObject(object):
             for unit in gameStateObj.allunits:
                 if unit.team == self.team and unit.ai_group == self.ai_group:
                     Action.do(Action.AIGroupPing(unit), gameStateObj)
-                    if not self.hasMoved and self.hasRunAI():  # We need to tell this guy to try again
-                        gameStateObj.ai_unit_list.append(self)  # Move him up to next on the list
-                        self.reset_ai()
+                    if not unit.hasMoved and unit.hasRunAI():  # We need to tell this guy to try again
+                        gameStateObj.ai_unit_list.append(unit)  # Move him up to next on the list
+                        unit.reset_ai()
 
     def canAttack(self, gameStateObj):
         return self.getAllTargetPositions(gameStateObj) and not self.hasAttacked
@@ -1563,6 +1610,12 @@ class UnitObject(object):
         elif crit == 3:
             damage *= 3
 
+        if isinstance(target, UnitObject):
+            for status in target.status_effects:
+                if status.resist_multiplier:
+                    multiplier = float(eval(status.resist_multiplier))
+                    damage = int(damage * multiplier)
+
         # Handle hybrid miss
         if hybrid:
             damage = int(damage * hybrid/100.0) 
@@ -1575,7 +1628,9 @@ class UnitObject(object):
             return target.stats['HP'] - target.currenthp
         heal = int(eval(item.heal)) + GC.EQUATIONS.get_heal(self, item)
         if self is not target:
-            heal += sum(status.caretaker for status in self.status_effects if status.caretaker)
+            for status in self.status_effects:
+                if status.caretaker:
+                    heal += int(eval(status.caretaker))
 
         return heal
 
@@ -1762,12 +1817,14 @@ class UnitObject(object):
                 accuracy = item.crit + GC.EQUATIONS.get_equation(item.alternate_crit, self, item, dist)
             else:
                 accuracy = item.crit + GC.EQUATIONS.get_crit(self, item, dist)
-            accuracy += sum(int(eval(status.crit_hit, globals(), locals())) for status in self.status_effects if status.crit_hit)
+            for status in self.status_effects:
+                if status.crit_hit:
+                    accuracy += int(eval(status.crit_hit, globals(), locals()))
             accuracy += self.get_support_bonuses(gameStateObj)[4]
             # Generic rank bonuses
             if item.TYPE:
                 idx = Weapons.TRIANGLE.name_to_index[item.TYPE]
-                accuracy += Weapons.EXP.get_rank_bonus(self.wexp[idx])[1]
+                accuracy += Weapons.EXP.get_rank_bonus(self.wexp[idx])[2]
             return accuracy
         else:
             return 0
@@ -1777,7 +1834,9 @@ class UnitObject(object):
             base = GC.EQUATIONS.get_equation(item_to_avoid.alternate_crit_avoid, self, self.getMainWeapon(), dist)
         else:
             base = GC.EQUATIONS.get_crit_avoid(self, self.getMainWeapon(), dist)
-        base += sum(int(eval(status.crit_avoid, globals(), locals())) for status in self.status_effects if status.crit_avoid)
+        for status in self.status_effects:
+            if status.crit_avoid:
+                base += int(eval(status.crit_avoid, globals(), locals()))
         base += self.get_support_bonuses(gameStateObj)[5]
         return base
 
@@ -1813,16 +1872,6 @@ class UnitObject(object):
     def isDone(self):
         return self.finished
 
-    def lock_active(self):
-        self.isActive += 1
-
-    def unlock_active(self):
-        self.isActive -= 1
-        self.isActive = max(0, self.isActive)
-        # if self.isActive < 0:
-        #     logger.error('Something let go of this unit without grabbing hold first!')
-        #     self.isActive = 0
-
     def reset_ai(self):
         self.hasRunMoveAI = False
         self.hasRunAttackAI = False
@@ -1834,7 +1883,6 @@ class UnitObject(object):
         self.hasAttacked = False # Controls whether unit has done an action which disallows attacking, an action which ends turn
         self.finished = False # Controls whether unit has completed their turn.
         self.reset_ai()
-        self.isActive = 0
         self.isDying = False # Unit is dying
         self.path = []
         self.movement_left = self.stats['MOV']
@@ -1871,7 +1919,9 @@ class UnitObject(object):
         # Units should have their temporary statuses removed
         # Create copy so we can iterate it over without messing around with stuff...
         for status in self.status_effects[:]:
-            if status.time or status.remove_range or status.lost_on_interact or status.lost_on_endstep:
+            if (status.time or status.remove_range or 
+                    status.lost_on_interact or status.lost_on_endstep or 
+                    status.lost_on_attack or status.lost_on_endchapter):
                 # Without clean_up parameter, certain statuses can give out other status on removal, statuses we don't want
                 # Like if you remove flying, you can get tile statuses, which you obviously don't want at this point
                 Action.RemoveStatus(self, status, clean_up=True).do(gameStateObj)
@@ -1879,16 +1929,19 @@ class UnitObject(object):
         for status in self.status_effects:
             if status.count:
                 status.count.count = status.count.orig_count
-            if status.active:
-                status.active.reset_charge()
-            if status.automatic:
-                status.automatic.reset_charge()
+            if status.combat_art:
+                status.combat_art.reset_charge()
+            if status.activated_item:
+                status.activated_item.reset_charge()
             if status.tether:
                 Action.UnTetherStatus(status, self.id).do(gameStateObj)
         # Items with chapter counts should be reset
         for item in self.items:
             if item.c_uses:
                 item.c_uses.uses = item.c_uses.total_uses
+            elif item.cooldown:
+                if not item.cooldown.persist:
+                    item.cooldown.reset()
         # Units should have their positions NULLED
         self.position = None
         # Unit sprite should be reset
@@ -1930,11 +1983,13 @@ class UnitObject(object):
                        'items': [item.uid for item in self.items],
                        'ai': self.ai_descriptor,
                        'records': self.records,
+                       'portrait_id': self.portrait_id,
                        'dead': self.dead,
                        'finished': self.finished,
                        'TRV': self.TRV,
                        'stats': [stat.serialize() for name, stat in self.stats.items()],
-                       'movement_group': self.movement_group}
+                       'movement_group': self.movement_group,
+                       'fatigue': self.fatigue}
         return serial_dict
 
     def acquire_tile_status(self, gameStateObj, force=False):
@@ -1957,14 +2012,28 @@ class UnitObject(object):
     def escape(self, gameStateObj):
         # Handles any events that happen on escape
         Action.do(Action.HasAttacked(self), gameStateObj)
+        if 'Escape' in gameStateObj.map.tile_info_dict[self.position]:
+            escape_name = gameStateObj.map.tile_info_dict[self.position]['Escape']
+        elif 'Arrive' in gameStateObj.map.tile_info_dict[self.position]:
+            escape_name = gameStateObj.map.tile_info_dict[self.position]['Arrive']
+        else:
+            escape_name = None
         gameStateObj.stateMachine.changeState('wait')
-        gameStateObj.message.append(Dialogue.Dialogue_Scene('Data/escapeScript.txt', unit=self, tile_pos=self.position))
+        gameStateObj.message.append(Dialogue.Dialogue_Scene('Data/escapeScript.txt', unit=self, name=escape_name, tile_pos=self.position))
         gameStateObj.stateMachine.changeState('dialogue')
 
     def seize(self, gameStateObj):
         Action.do(Action.HasAttacked(self), gameStateObj)
+        if 'Lord_Seize' in gameStateObj.map.tile_info_dict[self.position]:
+            seize_name = gameStateObj.map.tile_info_dict[self.position]['Lord_Seize']
+        elif 'Seize' in gameStateObj.map.tile_info_dict[self.position]:
+            seize_name = gameStateObj.map.tile_info_dict[self.position]['Seize']
+        elif 'Enemy_Seize' in gameStateObj.map.tile_info_dict[self.position]:
+            seize_name = gameStateObj.map.tile_info_dict[self.position]['Enemy_Seize']
+        else:
+            seize_name = None
         gameStateObj.stateMachine.changeState('wait')
-        gameStateObj.message.append(Dialogue.Dialogue_Scene('Data/seizeScript.txt', unit=self, tile_pos=self.position))
+        gameStateObj.message.append(Dialogue.Dialogue_Scene('Data/seizeScript.txt', unit=self, name=seize_name, tile_pos=self.position))
         gameStateObj.stateMachine.changeState('dialogue')
 
     def unlock(self, pos, item, gameStateObj):
@@ -1983,12 +2052,9 @@ class UnitObject(object):
                 gameStateObj.banners.append(Banner.brokenItemBanner(self, item))
                 gameStateObj.stateMachine.changeState('itemgain')
 
-    def get_unlock_key(self):
+    def get_unlock_keys(self):
         keys = [item for item in self.items if item.key]
-        item = None
-        if keys and 'locktouch' not in self.status_bundle:
-            item = keys[0]
-        return item
+        return keys
 
     def can_unlock(self):
         return 'locktouch' in self.status_bundle or any(item.unlock for item in self.items) 
@@ -2005,26 +2071,36 @@ class UnitObject(object):
         index = len(self.items)
         self.insert_item(index, item, gameStateObj)
 
+    def unequip_item(self, item, gameStateObj):
+        for status_on_equip in item.status_on_equip:
+            Action.do(Action.RemoveStatus(self, status_on_equip), gameStateObj)
+
+    def equip_item(self, item, gameStateObj):
+        for status_on_equip in item.status_on_equip:
+            new_status = StatusCatalog.statusparser(status_on_equip, gameStateObj)
+            Action.do(Action.AddStatus(self, new_status), gameStateObj)
+
     # This does the adding and subtracting of statuses
     def remove_item(self, item, gameStateObj):
         logger.debug("Removing %s from %s items.", item, self.name)
-        was_mainweapon = self.getMainWeapon() == item
+        next_weapon = next((item for item in self.items if item.weapon and self.canWield(item)), None)
+        was_mainweapon = next_weapon == item
         self.items.remove(item)
         item.item_owner = 0
+        if was_mainweapon:
+            self.unequip_item(item, gameStateObj)
         for status_on_hold in item.status_on_hold:
             Action.do(Action.RemoveStatus(self, status_on_hold), gameStateObj)
-        if was_mainweapon and self.canWield(item):
-            for status_on_equip in item.status_on_equip:
-                Action.do(Action.RemoveStatus(self, status_on_equip), gameStateObj)
         # remove item mods skills
         for status in self.status_effects:
             if status.item_mod:
                 status.item_mod.reverse_mod(item, gameStateObj)
         # There may be a new item equipped
         if was_mainweapon and self.getMainWeapon():
-            for status_on_equip in self.getMainWeapon().status_on_equip:
-                new_status = StatusCatalog.statusparser(status_on_equip, gameStateObj)
-                Action.do(Action.AddStatus(self, new_status), gameStateObj)
+            self.equip_item(self.getMainWeapon(), gameStateObj)
+        # Handle boundary nonsense -- Using a new weapon can make your min or max range change
+        if gameStateObj.boundary_manager:
+            gameStateObj.boundary_manager.recalculate_unit(self, gameStateObj)
 
     # This does the adding and subtracting of statuses
     def insert_item(self, index, item, gameStateObj):
@@ -2035,14 +2111,12 @@ class UnitObject(object):
             self.items.insert(index, item)
             if self.getMainWeapon() == item: # If new mainweapon...
                 # You unequipped a different item, so remove its status.
-                if len(self.items) > 1 and self.items[1].status_on_equip and self.canWield(self.items[1]):
-                    for status_on_equip in self.items[1].status_on_equip:
-                        Action.do(Action.RemoveStatus(self, status_on_equip), gameStateObj)
+                prev_main_weapon = next((i for i in self.items if i.weapon and self.canWield(i) and i is not item), None)
+                if prev_main_weapon:
+                    self.unequip_item(prev_main_weapon, gameStateObj)
                 # Now add yours
-                if self.canWield(item):
-                    for status_on_equip in item.status_on_equip:
-                        new_status = StatusCatalog.statusparser(status_on_equip, gameStateObj)
-                        Action.do(Action.AddStatus(self, new_status), gameStateObj)
+                if self.canWield(item) and self.canUse(item):
+                    self.equip_item(item, gameStateObj)
         else:
             self.items.insert(index, item)
             item.item_owner = self.id
@@ -2057,14 +2131,15 @@ class UnitObject(object):
                     Action.do(Action.AddStatus(self, new_status), gameStateObj)
                 if self.getMainWeapon() == item: # If new mainweapon...
                     # You unequipped a different item, so remove its status.
-                    if len(self.items) > 1 and self.items[1].status_on_equip and self.canWield(self.items[1]):
-                        for status_on_equip in self.items[1].status_on_equip:
-                            Action.do(Action.RemoveStatus(self, status_on_equip), gameStateObj)
+                    prev_main_weapon = next((i for i in self.items if i.weapon and self.canWield(i) and i is not item), None)
+                    if prev_main_weapon:
+                        self.unequip_item(prev_main_weapon, gameStateObj)
                     # Now add yours
-                    if self.canWield(item):
-                        for status_on_equip in item.status_on_equip:
-                            new_status = StatusCatalog.statusparser(status_on_equip, gameStateObj)
-                            Action.do(Action.AddStatus(self, new_status), gameStateObj)
+                    if self.canWield(item) and self.canUse(item):
+                        self.equip_item(item, gameStateObj)
+            # Handle boundary nonsense
+            if gameStateObj.boundary_manager:
+                gameStateObj.boundary_manager.recalculate_unit(self, gameStateObj)
 
     def die(self, gameStateObj, event=False):
         if event:
@@ -2119,11 +2194,10 @@ class UnitObject(object):
                     if not gameStateObj.cursor.camera_follow:
                         gameStateObj.cursor.camera_follow = self.id
                 if gameStateObj.cursor.camera_follow == self.id:
-                    gameStateObj.cursor.setPosition(self.position, gameStateObj)
+                    gameStateObj.cursor.centerPosition(self.position, gameStateObj)
             else: # Path is empty, which means we are done
                 gameStateObj.moving_units.discard(self)
                 # self.sprite.change_state('normal', gameStateObj)
-                self.unlock_active()
                 # Add status for new position
                 self.current_arrive_action = Action.MoveArrive(self)
                 Action.do(self.current_arrive_action, gameStateObj)

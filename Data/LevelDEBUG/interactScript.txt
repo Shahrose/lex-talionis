@@ -1,3 +1,0 @@
-if;gameStateObj.check_rout()
-    win_game
-end

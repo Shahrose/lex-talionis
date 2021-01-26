@@ -112,9 +112,10 @@ class Cursor(object):
         if gameStateObj.stateMachine.getState() == 'move':
             if self.border_position:
                 self.movePath = self.currentSelectedUnit.getPath(gameStateObj, self.border_position)
-            else:
+                self.constructArrows(self.movePath[::-1], gameStateObj)
+            elif gameStateObj.highlight_manager.check_arrow(self.position):
                 self.movePath = self.currentSelectedUnit.getPath(gameStateObj, self.position)
-            self.constructArrows(self.movePath[::-1], gameStateObj)
+                self.constructArrows(self.movePath[::-1], gameStateObj)
 
     # The algorithm below is all hard-coded in, which sucks, should change it later, but it WORKS, so thats good
     # ALSO IS EXTREMELY SHITTY ALGORITHM I DON'T UNDERSTAND. was found using trial and error, for the most part
@@ -244,8 +245,8 @@ class Cursor(object):
             return            
         logger.debug('Cursor new position %s', newposition)
         self.position = newposition
-        gameStateObj.cameraOffset.set_x(self.position[0] - GC.TILEX/2)
-        gameStateObj.cameraOffset.set_y(self.position[1] - GC.TILEY/2)
+        gameStateObj.cameraOffset.set_x(self.position[0] - GC.TILEX//2)
+        gameStateObj.cameraOffset.set_y(self.position[1] - GC.TILEY//2)
         self.remove_unit_display()
 
     def autocursor(self, gameStateObj, force=False):

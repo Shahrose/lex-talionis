@@ -23,6 +23,7 @@
 
 # === IMPORT MODULES ==========================================================
 import os
+from datetime import datetime
 
 # Custom imports
 import Code.imagesDict as imagesDict
@@ -71,6 +72,11 @@ def run(gameStateObj, metaDataObj):
 
         new_size = (GC.WINWIDTH * cf.OPTIONS['Screen Size'], GC.WINHEIGHT * cf.OPTIONS['Screen Size'])
         Engine.push_display(mapSurf, new_size, GC.DISPLAYSURF)
+        # Check for taking screenshot
+        for event in eventList:
+            if event.type == Engine.KEYDOWN and event.key == Engine.key_map['`']:
+                current_time = str(datetime.now()).replace(' ', '_').replace(':', '.')
+                Engine.save_surface(mapSurf, "Lex_Talionis_%s.png" % current_time)
         # Keep gameloop (update, renders, etc) ticking
         Engine.update_display()
         gameStateObj.playtime += GC.FPSCLOCK.tick(GC.FPS)
@@ -99,6 +105,8 @@ def inform_error():
 # === START === START === START  === START ===  START === START === START === #
 if __name__ == '__main__':
     import logging, traceback
+    logging.logThreads = 0
+    logging.logProcesses = 0
     logger = logging.getLogger(__name__)
     try:
         handle_debug_logs()
@@ -109,7 +117,7 @@ if __name__ == '__main__':
         my_level = logging.DEBUG
     else:
         my_level = logging.WARNING
-    logging.basicConfig(filename='./Saves/debug.log.1', filemode='w',
+    logging.basicConfig(handlers=[logging.FileHandler('./Saves/debug.log.1', 'w', 'utf-8')],
                         level=my_level, format='%(relativeCreated)d %(levelname)7s:%(module)16s: %(message)s')
     logger.info('*** Lex Talionis Engine Version %s ***' % GC.version)
     try:
@@ -117,6 +125,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.exception(e)
         inform_error()
+        print('*** Lex Talionis Engine Version %s ***' % GC.version)
         print('Main Crash {0}'.format(str(e)))
         # Now print exception to screen
         import time

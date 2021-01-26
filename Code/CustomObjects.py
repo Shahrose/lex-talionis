@@ -3,6 +3,7 @@ import os, pickle, math
 from . import GlobalConstants as GC
 from . import configuration as cf
 from . import Utility, Image_Modification, Engine
+from . import Action
 
 import logging
 logger = logging.getLogger(__name__)
@@ -148,14 +149,19 @@ class Phase(object):
         if self.current >= len(self.order):
             self.current = 0
 
+    def _prev(self):
+        self.current -= 1
+        if self.current < 0:
+            self.current = len(self.order) - 1
+
     def next(self, gameStateObj):
         self.previous = self.current
         # Actually change phase
         if gameStateObj.allunits:
-            self._next()
+            Action.do(Action.ChangePhase(), gameStateObj)
             while not any(self.get_current_phase() == unit.team for unit in gameStateObj.allunits if unit.position) \
                     and self.current != 0: # Also, never skip player phase
-                self._next()
+                Action.do(Action.ChangePhase(), gameStateObj)
         else:
             self.current = 0 # If no units at all, just default to player phase?
 
@@ -484,36 +490,51 @@ class CameraOffset(object):
         self.pan_to = corners[idx:] + corners[:idx]
         # print(self.pan_to)
 
+    def set_travel_limits(self, tilemap):
+        if self.x < 0:
+            self.set_x(0)
+        if self.y < 0:
+            self.set_y(0)
+        if self.x > (tilemap.width - GC.TILEX): # Need this minus to account for size of screen
+            self.set_x(tilemap.width - GC.TILEX)
+        if self.y > (tilemap.height - GC.TILEY):
+            self.set_y(tilemap.height - GC.TILEY)
+
+    def set_limits(self, tilemap):
+        if self.current_x < 0:
+            self.current_x = 0
+        elif self.current_x > (tilemap.width - GC.TILEX): # Need this minus to account for size of screen
+            self.current_x = (tilemap.width - GC.TILEX)
+        if self.current_y < 0:
+            self.current_y = 0
+        elif self.current_y > (tilemap.height - GC.TILEY):
+            self.current_y = (tilemap.height - GC.TILEY)
+        
     def update(self, gameStateObj):
-        gameStateObj.set_camera_limits()
+        if gameStateObj.map:
+            self.set_travel_limits(gameStateObj.map)
         if self.current_x != self.x:
             if self.current_x > self.x:
-                self.current_x -= 0.125 if self.pan_flag else (self.current_x - self.x)/self.speed
+                self.current_x -= 0.125 if self.pan_flag else min(2, (self.current_x - self.x)/self.speed)
             elif self.current_x < self.x:
-                self.current_x += 0.125 if self.pan_flag else (self.x - self.current_x)/self.speed
+                self.current_x += 0.125 if self.pan_flag else min(2, (self.x - self.current_x)/self.speed)
         if self.current_y != self.y:
             if self.current_y > self.y:
-                self.current_y -= 0.125 if self.pan_flag else (self.current_y - self.y)/self.speed
+                self.current_y -= 0.125 if self.pan_flag else min(2, (self.current_y - self.y)/self.speed)
             elif self.current_y < self.y:
-                self.current_y += 0.125 if self.pan_flag else (self.y - self.current_y)/self.speed
+                self.current_y += 0.125 if self.pan_flag else min(2, (self.y - self.current_y)/self.speed)
         # If they are close enough, make them so.
-        if abs(self.current_x - self.x) < 0.25:
+        if abs(self.current_x - self.x) <= 0.25:
             self.current_x = self.x
-        if abs(self.current_y - self.y) < 0.25:
+        if abs(self.current_y - self.y) <= 0.25:
             self.current_y = self.y
         # Move to next place on the list
         if self.pan_to and self.current_y == self.y and self.current_x == self.x:
             self.x, self.y = self.pan_to.pop()
 
         # Make sure current_x and current_y do not go off screen
-        if self.current_x < 0:
-            self.current_x = 0
-        elif self.current_x > (gameStateObj.map.width - GC.TILEX): # Need this minus to account for size of screen
-            self.current_x = (gameStateObj.map.width - GC.TILEX)
-        if self.current_y < 0:
-            self.current_y = 0
-        elif self.current_y > (gameStateObj.map.height - GC.TILEY):
-            self.current_y = (gameStateObj.map.height - GC.TILEY)
+        if gameStateObj.map:
+            self.set_limits(gameStateObj.map)
         # logger.debug('Camera %s %s %s %s', self.current_x, self.current_y, self.x, self.y)
 
 class PhaseMusic(object):
@@ -548,30 +569,30 @@ class PhaseMusic(object):
         return cls(*info)
 
     def change_music(self, phase_name, music_name):
-        if music_name not in GC.MUSICDICT:
+        if music_name != 'None' and music_name not in GC.MUSICDICT:
             logging.error('Music %s not in GC.MUSICDICT', music_name)
             return None
         if phase_name == 'player':
             self.player_name = music_name
-            self.player_music = GC.MUSICDICT[music_name]
+            self.player_music = GC.MUSICDICT.get(music_name)
         elif phase_name == 'enemy' or phase_name == 'enemy2':
             self.enemy_name = music_name
-            self.enemy_music = GC.MUSICDICT[music_name]
+            self.enemy_music = GC.MUSICDICT.get(music_name)
         elif phase_name == 'other':
             self.other_name = music_name
-            self.other_music = GC.MUSICDICT[music_name]
+            self.other_music = GC.MUSICDICT.get(music_name)
         elif phase_name == 'player_battle':
             self.player_battle_name = music_name
-            self.player_battle_music = GC.MUSICDICT[music_name]
+            self.player_battle_music = GC.MUSICDICT.get(music_name)
         elif phase_name == 'enemy_battle' or phase_name == 'enemy2_battle':
             self.enemy_battle_name = music_name
-            self.enemy_battle_music = GC.MUSICDICT[music_name]            
+            self.enemy_battle_music = GC.MUSICDICT.get(music_name)           
         else:
             logging.error('Unsupported phase name: %s', phase_name)
             return None        
 
 # === HANDLES PRESSING INFO AND APPLYING HELP MENU ===========================
-def handle_info_key(gameStateObj, metaDataObj, chosen_unit=None, one_unit_only=False, scroll_units=None):
+def handle_info_key(gameStateObj, metaDataObj, chosen_unit=None, one_unit_only=False, scroll_units=None, no_movement=False):
     gameStateObj.cursor.currentHoveredUnit = gameStateObj.cursor.getHoveredUnit(gameStateObj)
     if chosen_unit:
         my_unit = chosen_unit
@@ -583,6 +604,7 @@ def handle_info_key(gameStateObj, metaDataObj, chosen_unit=None, one_unit_only=F
     gameStateObj.info_menu_struct['one_unit_only'] = one_unit_only
     gameStateObj.info_menu_struct['scroll_units'] = scroll_units
     gameStateObj.info_menu_struct['chosen_unit'] = my_unit
+    gameStateObj.info_menu_struct['no_movement'] = no_movement
     gameStateObj.stateMachine.changeState('info_menu')
     gameStateObj.stateMachine.changeState('transition_out')
 

@@ -319,7 +319,7 @@
         <components>resist,hidden</components>
         
         <!-- Just an unholy amount of defense -->
-        <resist>500</resist>
+        <resist>1500</resist>
     </status>
 
     <status name="Sure Strike">
@@ -360,7 +360,7 @@
         <components>mt,hidden</components>
         
         <!-- Just an unholy amount of hit -->
-        <mt>200</mt>
+        <mt>1000</mt>
     </status>
 
     <status name="Luna">

@@ -27,7 +27,8 @@ class InputManager(object):
     # Set joystick information. 
     # The joystick needs to be plugged in before this method is called 
     def init_joystick(self):
-        if Engine.joystick_avail():
+        # if Engine.joystick_avail():
+        if False:
             joystick = Engine.get_joystick()
             joystick.init()
             self.joystick = joystick
@@ -108,7 +109,7 @@ class InputManager(object):
                         self.key_up_events.append(button)
                     else:
                         self.key_down_events.append(button)
-                elif all_keys and event.type == Engine.KEYUP:
+                elif all_keys and event.type == Engine.KEYDOWN:
                     self.unavailable_button = event.key
                     return 'NEW'
 

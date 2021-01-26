@@ -23,28 +23,52 @@ class ItemModComponent(object):
         exec(command)
 
     def change_effect(self, item, gameStateObj):
-        for i in range(len(self.effect_change)/2):
+        for i in range(len(self.effect_change)//2):
             orig_val = item[self.effect_change[i*2]]
-            val = eval(self.effect_change[i*2 + 1], globals(), locals())
+            val = eval(self.effect_change[i*2 + 1], locals(), globals())
             logger.debug('Set %s to %s', self.effect_change[i*2], val)
             item['orig_' + self.effect_change[i*2]] = orig_val
             item[self.effect_change[i*2]] = val
 
     def change_effect_back(self, item, gameStateObj):
-        for i in range(len(self.effect_change)/2):
+        for i in range(len(self.effect_change)//2):
             orig_val = item['orig_' + self.effect_change[i*2]]
             logger.debug('Set %s to %s', self.effect_change[i*2], orig_val)
             item[self.effect_change[i*2]] = orig_val
 
+    def add_and_change_effect(self, item, gameStateObj):
+        for i in range(len(self.effect_change)//2):
+            orig_val = item[self.effect_change[i*2]]
+            if orig_val:
+                self.add_effect(item, gameStateObj)
+            else:
+                val = eval(self.effect_change[i*2 + 1], locals(), globals())
+                logger.debug('Set %s to %s', self.effect_change[i*2], val)
+                if orig_val is None:
+                    # Need a non-null thing to save value as
+                    item['orig_' + self.effect_change[i*2]] = 'None'  
+                else:
+                    item['orig_' + self.effect_change[i*2]] = orig_val
+                item[self.effect_change[i*2]] = val
+
+    def add_and_change_effect_back(self, item, gameStateObj):
+        for i in range(len(self.effect_change)//2):
+            # If we "changed" the value of this component
+            orig_val = item['orig_' + self.effect_change[i*2]]
+            if orig_val:
+                if orig_val == 'None':
+                    orig_val = None
+                logger.debug('Set %s to %s', self.effect_change[i*2], orig_val)
+                item[self.effect_change[i*2]] = orig_val
+            else:
+                self.reverse_effect(item, gameStateObj)
+
     def apply_mod(self, item, gameStateObj):
         self.reverse_mod(item, gameStateObj)
-        if eval(self.conditional, globals(), locals()):
+        if eval(self.conditional, locals()):
             item[self.uid] = True
             if self.effect_add and self.effect_change:
-                if item[self.effect_add[0]]:
-                    self.add_effect(item, gameStateObj)
-                else:
-                    self.change_effect(item, gameStateObj)
+                self.add_and_change_effect(item, gameStateObj)
             elif self.effect_change:
                 self.change_effect(item, gameStateObj)
             elif self.effect_add:
@@ -54,10 +78,7 @@ class ItemModComponent(object):
         if item[self.uid]:
             item[self.uid] = False
             if self.effect_add and self.effect_change:
-                if item['orig_' + self.effect_change[0]]:
-                    self.change_effect_back(item, gameStateObj)
-                else:
-                    self.reverse_effect(item, gameStateObj)
+                self.add_and_change_effect_back(item, gameStateObj)
             elif self.effect_change:
                 self.change_effect_back(item, gameStateObj)
             elif self.effect_add:
@@ -77,6 +98,9 @@ class ChargeComponent(object):
 
     def set_to_max(self):
         self.current_charge = self.charge_max
+
+    def get_max(self):
+        return self.charge_max
 
     def increase_charge(self, unit, inc):
         self.current_charge += inc
@@ -147,13 +171,13 @@ class CombatArtComponent(ChargeComponent):
         return self.mode == Mode.AUTOMATIC
 
     def valid_weapons(self, unit, weapons):
-        return eval(self.valid_weapons_func, globals(), locals())
+        return eval(self.valid_weapons_func, locals())
 
     def check_valid(self, unit, gameStateObj):
-        return eval(self.check_valid_func, globals(), locals())
+        return eval(self.check_valid_func, locals())
 
     def basic_check(self, unit, gameStateObj):
-        valid_weapons = self.valid_weapons(unit, [i for i in unit.items if i.weapon])
+        valid_weapons = self.valid_weapons(unit, [i for i in unit.items if i.weapon and unit.canWield(i) and unit.canUse(i)])
         for weapon in valid_weapons:
             if unit.getValidTargetPositions(gameStateObj, weapon):
                 return True
@@ -169,10 +193,10 @@ class ActivatedItemComponent(ChargeComponent):
         self.get_choices_func = get_choices_func
 
     def check_valid(self, unit, gameStateObj):
-        return eval(self.check_valid_func, globals(), locals())
+        return eval(self.check_valid_func, locals())
 
     def get_choices(self, unit, gameStateObj):
-        return eval(self.get_choices_func, globals(), locals())
+        return eval(self.get_choices_func, locals())
 
 class ProcComponent(object):
     def __init__(self, status_id, proc_rate='SKL', priority=10):

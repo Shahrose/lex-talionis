@@ -3,11 +3,12 @@ from collections import OrderedDict
 
 from . import bmpfont, Engine, imagesDict, Equations
 from . import configuration as cf
+from . import static_random
 
 import logging
 logger = logging.getLogger(__name__)
 
-version = "0.9.0.4"
+version = "0.9.4.5"
 # === GLOBAL CONSTANTS ===========================================
 FPS = 60
 FRAMERATE = 1000//FPS
@@ -73,7 +74,7 @@ EQUATIONS = Equations.Parser(loc + 'Data/equations.txt')
 
 def create_item_dict():
     item_dict = {}
-    # For each lore
+    # For each item
     for idx, entry in enumerate(ET.parse(loc + 'Data/items.xml').getroot().findall('item')):
         name = entry.find('id').text
         item_dict[name] = {c.tag: c.text for c in entry}
@@ -136,7 +137,7 @@ DIFFICULTYDATA = create_difficulty_dict(loc + 'Data/difficulty_modes.xml')
 
 def create_mcost_dict(fp):
     mcost_dict = {}
-    with open(fp, 'r') as mcost_data:
+    with open(fp, mode='r', encoding='utf-8') as mcost_data:
         for line in mcost_data.readlines():
             if line.startswith('#'):
                 continue
@@ -149,7 +150,7 @@ def create_ai_dict(fp):
     ai_dict = OrderedDict()
     if not os.path.exists(fp):
         return ai_dict
-    with open(fp, 'r') as ai_data:
+    with open(fp, mode='r', encoding='utf-8') as ai_data:
         for line in ai_data.readlines():
             if line.startswith('#'):
                 continue
@@ -171,7 +172,7 @@ def create_overworld_data(fp):
     cur_dict = None
     if not os.path.exists(fp):
         return overworld_data
-    with open(fp, 'r') as data:
+    with open(fp, mode='r', encoding='utf-8') as data:
         for line in data.readlines():
             if line.startswith('#'):
                 continue
@@ -199,6 +200,52 @@ def create_overworld_data(fp):
                 overworld_data[cur_dict].append(party)   
     return overworld_data
 OVERWORLDDATA = create_overworld_data(loc + 'Data/overworld_data.txt')
+
+class LevelUpQuotes():
+    def __init__(self, fn):
+        self.info = {}
+        if os.path.exists(fn):
+            with open(fn, encoding='utf-8', mode='r') as fp:
+                lines = [l.strip().split(';') for l in fp.readlines() if l.strip() and not l.strip().startswith('#')]
+            for line in lines:
+                self.info[line[0]] = []
+                for quotes in line[1:]:
+                    s_quotes = quotes.split('|')
+                    # List of lists
+                    self.info[line[0]].append(s_quotes)
+
+    def get(self, unit_id, num_stats, level):
+        if unit_id in self.info:
+            if num_stats <= 1:
+                quotes = self.info[unit_id][0]
+            elif num_stats in (2, 3):
+                quotes = self.info[unit_id][1]
+            elif num_stats in (4, 5):
+                quotes = self.info[unit_id][2]
+            else:
+                quotes = self.info[unit_id][3]
+            # Return a random quote
+            r = static_random.get_levelup(unit_id, level)
+            return quotes[r.randint(0, len(quotes) - 1)]
+        return None
+
+    def get_capped(self, unit_id, level):
+        if unit_id in self.info:
+            if len(self.info[unit_id]) > 4:
+                quotes = self.info[unit_id][4]
+                r = static_random.get_levelup(unit_id, level)
+                return quotes[r.randint(0, len(quotes) - 1)]
+        return None
+
+    def get_promotion(self, unit_id, level):
+        if unit_id in self.info:
+            if len(self.info[unit_id]) > 5:
+                quotes = self.info[unit_id][5]
+                r = static_random.get_levelup(unit_id, level)
+                return quotes[r.randint(0, len(quotes) - 1)]
+        return None
+
+LEVELUPQUOTES = LevelUpQuotes(loc + 'Data/levelup_quotes.txt')
 
 FONT = {}
 for fp in os.listdir(loc + 'Sprites/Fonts'):

@@ -75,7 +75,7 @@ class Status(object):
         serial_dict['upkeep_sc_count'] = self.upkeep_stat_change.count if self.upkeep_stat_change else None
         if self.activated_item:
             self.data['activated_item'] = self.activated_item.current_charge
-        elif self.combat_art:
+        if self.combat_art:
             self.data['combat_art'] = self.combat_art.current_charge
         serial_dict['children'] = self.children
         serial_dict['owner_id'] = self.owner_id
@@ -253,7 +253,7 @@ class Status_Processor(object):
         # New unit
         elif self.state.getState() == 'new_unit':
             # Get all statuses that could affect this unit
-            self.current_unit_statuses = self.current_unit.status_effects
+            self.current_unit_statuses = self.current_unit.status_effects[:]
             self.status_index = 0
 
             # Get status
@@ -283,9 +283,11 @@ class Status_Processor(object):
                     # If the hp_changed or the current status has a one time animation, run the process, otherwise, move onto next status
                     # Processing state handles animation and HP updating
                     if self.oldhp != self.newhp:
+                        if self.newhp > self.oldhp:
+                            GC.SOUNDDICT['MapHeal'].play()
                         logger.debug('HP change: %s %s', self.oldhp, self.newhp)
                         # self.health_bar.update()
-                        # self.start_time_for_this_status = current_time + self.health_bar.time_for_change - 400
+                        self.start_time_for_this_status = current_time
                         gameStateObj.cursor.setPosition(self.current_unit.position, gameStateObj)
                         self.current_unit.sprite.change_state('status_active', gameStateObj)
                         self.state.changeState('processing')
@@ -306,7 +308,6 @@ class Status_Processor(object):
                 # handle death of a unit
                 if self.current_unit.currenthp <= 0:
                     self.current_unit.isDying = True
-                    gameStateObj.stateMachine.changeState('dying')
                     self.state.changeState('begin')
                     return "Death"
                 else:
@@ -359,21 +360,18 @@ def HandleStatusUpkeep(status, unit, gameStateObj):
 
     if status.hp_percentage:
         hp_change = int(int(unit.stats['HP']) * status.hp_percentage.percentage/100.0)
-        old_hp = unit.currenthp
         Action.do(Action.ChangeHP(unit, hp_change), gameStateObj)
-        if unit.currenthp > old_hp:
-            GC.SOUNDDICT['MapHeal'].play()
 
-    elif status.upkeep_damage:
+    if status.upkeep_damage:
         if ',' in status.upkeep_damage:
             low_damage, high_damage = status.upkeep_damage.split(',')
-            damage_dealt = static_random.shuffle(range(int(low_damage), int(high_damage)))[0]
+            old = static_random.get_other_random_state()
+            damage_dealt = static_random.get_other(int(low_damage), int(high_damage))
+            new = static_random.get_other_random_state()
+            Action.do(Action.RecordOtherRandomState(old, new), gameStateObj)
         else:
-            damage_dealt = int(status.upkeep_damage)
-        old_hp = unit.currenthp
-        Action.do(Action.ChangeHP(unit, damage_dealt), gameStateObj)
-        if unit.currenthp > old_hp:
-            GC.SOUNDDICT['MapHeal'].play()
+            damage_dealt = int(eval(status.upkeep_damage, globals(), locals()))
+        Action.do(Action.ChangeHP(unit, -damage_dealt), gameStateObj)
 
     if status.upkeep_stat_change:
         Action.do(Action.ApplyStatChange(unit, status.upkeep_stat_change.stat_change), gameStateObj)
@@ -394,12 +392,6 @@ def HandleStatusUpkeep(status, unit, gameStateObj):
             gameStateObj.boundary_manager._remove_unit(unit, gameStateObj)
             if unit.position:
                 gameStateObj.boundary_manager._add_unit(unit, gameStateObj)
-
-    # unit.change_hp(0)  # Just check bounds
-    # # if unit.currenthp > int(unit.stats['HP']):
-    # #     unit.currenthp = int(unit.stats['HP'])
-    # if unit.movement_left > int(unit.stats['MOV']):
-    #     unit.movement_left = max(0, int(unit.stats['MOV']))
 
     return oldhp, unit.currenthp 
 
@@ -458,12 +450,15 @@ def statusparser(s_id, gameStateObj=None):
                     value, conditional = status.find(component).text.split(';')
                     my_components[component] = ConditionalComponent(component, value, conditional)
                 # Others...
+                elif component == 'nihil':
+                    if status.find('nihil') is not None and status.find('nihil').text is not None:
+                        my_components['nihil'] = status.find('nihil').text.split(',')
+                    else:
+                        my_components['nihil'] = ['All']
                 elif component == 'stat_halve':
                     my_components['stat_halve'] = StatHalveComponent(status.find('stat_halve').text)
                 elif component == 'count':
                     my_components['count'] = CountComponent(int(status.find('count').text))
-                elif component == 'caretaker':
-                    my_components['caretaker'] = int(status.find('caretaker').text)
                 elif component == 'remove_range':
                     my_components['remove_range'] = int(status.find('remove_range').text)
                 elif component == 'buy_value_mod':
@@ -546,10 +541,10 @@ def deserialize(s_dict):
     status.owner_id = s_dict['owner_id']
     status.giver_id = s_dict['giver_id']
     status.data = s_dict.get('data', {})  # Get back persistent data
-    if s_dict.get('activated_item') is not None:
-        status.activated_item.current_charge = s_dict['activated_item']
-    if s_dict.get('combat_art') is not None:
-        status.combat_art.current_charge = s_dict['combat_art']
+    if status.data.get('activated_item') is not None:
+        status.activated_item.current_charge = status.data['activated_item']
+    if status.data.get('combat_art') is not None:
+        status.combat_art.current_charge = status.data['combat_art']
 
     return status
 

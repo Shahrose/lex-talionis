@@ -30,12 +30,16 @@ class GameStateObj(object):
         self.activeMenu = None
         self.childMenu = None
         self.background = None
+        self.shared_state_data = {}
         # Surface holder
         self.info_surf = None
         # playtime
         self.playtime = 0
         # mode
         self.mode = self.default_mode()
+        # Messages
+        # self.message = []
+        self.boundary_manager = None
 
     # Things that change between levels always
     def start(self, allreinforcements, prefabs, objective, music):
@@ -425,9 +429,6 @@ class GameStateObj(object):
     def register_status(self, status):
         logger.info('Registering status %s as %s', status, status.uid)
         self.allstatuses[status.uid] = status
-        # We need to remember to register the items that are used by the Active Skills
-        if status.active and status.active.item:
-            self.allitems[status.active.item.uid] = status.active.item
         # We need to remember to register an aura's child status
         if status.aura:
             self.register_status(status.aura.child_status)
@@ -443,15 +444,8 @@ class GameStateObj(object):
         return None
 
     def set_camera_limits(self):
-        # Set limits on cameraOffset
-        if self.cameraOffset.x < 0:
-            self.cameraOffset.set_x(0)
-        if self.cameraOffset.y < 0:
-            self.cameraOffset.set_y(0)
-        if self.cameraOffset.x > (self.map.width - GC.TILEX): # Need this minus to account for size of screen
-            self.cameraOffset.set_x(self.map.width - GC.TILEX)
-        if self.cameraOffset.y > (self.map.height - GC.TILEY):
-            self.cameraOffset.set_y(self.map.height - GC.TILEY)
+        self.cameraOffset.set_travel_limits(self.map)
+        self.cameraOffset.set_limits(self.map)
 
     def remove_fake_cursors(self):
         self.fake_cursors = []
@@ -462,10 +456,10 @@ class GameStateObj(object):
 
     def arena_closed(self, unit):
         if cf.CONSTANTS['arena_global_limit'] > 0 and \
-                self.level_constants['_global_arena_uses'] > cf.CONSTANTS['arena_global_limit']:
+                self.level_constants['_global_arena_uses'] >= cf.CONSTANTS['arena_global_limit']:
             return True
         elif cf.CONSTANTS['arena_unit_limit'] > 0 and \
-                self.level_constants['_' + str(unit.id) + '_arena_uses'] > cf.CONSTANTS['arena_unit_limit']:
+                self.level_constants['_' + str(unit.id) + '_arena_uses'] >= cf.CONSTANTS['arena_unit_limit']:
             return True
         return False
 
@@ -520,7 +514,8 @@ class GameStateObj(object):
                    'market_items': self.market_items,
                    'mode': self.mode,
                    'message': [message.serialize() for message in self.message],
-                   'phase_info': (self.phase.current, self.phase.previous)}
+                   'phase_info': (self.phase.current, self.phase.previous)
+                   }
         import time
         to_save_meta = {'playtime': self.playtime,
                         'realtime': time.time(),
@@ -559,15 +554,20 @@ class GameStateObj(object):
         # Handle player death
         for unit in self.allunits:
             if unit.dead:
+                unit.fatigue = 0
                 if not int(self.mode['death']): # Casual
                     unit.dead = False
                 elif cf.CONSTANTS['convoy_on_death']:
                     # Give all of the unit's items to the convoy
-                    for item in unit.items:
+                    for item in reversed(unit.items):
                         if not item.locked:
                             unit.remove_item(item, self)
                             item.owner = 0
                             self.convoy.append(item)
+
+        # Handle fatigue
+        if cf.CONSTANTS['fatigue']:
+            self.clean_up_fatigue()
 
         # Remove unnecessary information between levels
         self.sweep()
@@ -607,6 +607,40 @@ class GameStateObj(object):
                 node = self.support.node_dict[unit.id]
                 for edge in node.adjacent.values():
                     edge.reset()
+
+    def refresh_fatigue(self):
+        party_units = self.get_units_in_party()
+        refresh_these = [unit for unit in party_units if not unit.position]
+
+        for unit in refresh_these:
+            unit.fatigue = 0
+
+    def clean_up_fatigue(self):
+        party_units = self.get_units_in_party()
+        penalize_these = [unit for unit in party_units if unit.fatigue >= GC.EQUATIONS.get_max_fatigue(unit)]
+        help_these = [unit for unit in party_units if unit.fatigue < GC.EQUATIONS.get_max_fatigue(unit)]
+        
+        if self.game_constants['Fatigue'] == 2:
+            fatigue_status = StatusCatalog.statusparser("Fatigued", self)
+            # Give a status to those units who are fatigued
+            for unit in penalize_these:
+                Action.do(Action.AddStatus(unit, fatigue_status), self)
+            # Remove status from those units who are not fatigued
+            for unit in help_these:
+                for status in unit.status_effects:
+                    if status.id == "Fatigued":
+                        Action.do(Action.RemoveStatus(unit, status), self)
+
+        elif self.game_constants['Fatigue'] == 3:
+            fatigue_status = StatusCatalog.statusparser("Fatigued", self)
+            # Give a status to those units who are not fatigued    
+            for unit in help_these:
+                Action.do(Action.AddStatus(unit, fatigue_status), self)
+            # Remove status from those units who are fatigued
+            for unit in penalize_these:
+                for status in unit.status_effects:
+                    if status.id == "Fatigued":
+                        Action.do(Action.RemoveStatus(unit, status), self)
 
     def restock_convoy(self):
         cur_convoy = self._convoy[self.current_party]
@@ -689,7 +723,7 @@ class GameStateObj(object):
         # Done
 
     def output_progress_xml(self):
-        with open('Saves/progress_log.xml', 'a') as p_log:
+        with open('Saves/progress_log.xml', mode='a', encoding='utf-8') as p_log:
             p_log.write('<level name="' + str(self.game_constants['level']) + '">\n')
             p_log.write('\t<mode>' + self.mode['name'] + '</mode>\n')
             # Game Constants

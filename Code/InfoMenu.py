@@ -1,6 +1,6 @@
 from . import GlobalConstants as GC
 from . import configuration as cf
-from . import MenuFunctions, Engine, InputManager, StateMachine 
+from . import MenuFunctions, Engine, InputManager, StateMachine, Utility
 from . import GUIObjects, Weapons, Image_Modification, ClassData
 from . import HelpMenu
 
@@ -61,12 +61,13 @@ class InfoMenu(StateMachine.State):
         self.support_surf = None
         self.skill_surf = None
         self.class_skill_surf = None
+        self.fatigue_surf = None
 
     def back(self, gameStateObj):
         GC.SOUNDDICT['Select 4'].play()
         gameStateObj.info_menu_struct['current_state'] = self.currentState
         gameStateObj.info_menu_struct['chosen_unit'] = self.unit
-        if not gameStateObj.info_menu_struct['one_unit_only'] and self.unit.position:
+        if not gameStateObj.info_menu_struct['one_unit_only'] and self.unit.position and not gameStateObj.info_menu_struct['no_movement']:
             gameStateObj.cursor.setPosition(self.unit.position, gameStateObj)
         gameStateObj.stateMachine.changeState('transition_pop')
 
@@ -373,6 +374,12 @@ class InfoMenu(StateMachine.State):
             if not self.class_skill_surf:
                 self.class_skill_surf = self.create_class_skill_surf()
             self.draw_class_skill_surf(main_surf)
+            if cf.CONSTANTS['fatigue'] and self.unit.team == 'player' and \
+                    'Fatigue' in gameStateObj.game_constants:
+                if not self.fatigue_surf:
+                    self.fatigue_surf = self.create_fatigue_surf()
+                self.draw_fatigue_surf(main_surf)
+
         elif self.states[self.currentState] == 'Equipment':
             if not self.equipment_surf:
                 self.equipment_surf = self.create_equipment_surf(gameStateObj)
@@ -563,12 +570,8 @@ class InfoMenu(StateMachine.State):
         menu_surf = Engine.create_surface(menu_size, transparent=True)
 
         # Blit background highlight
-        index_of_mainweapon = None
         if self.unit.getMainWeapon(): # Ony highlight if unit has weapon
-            for index, item in enumerate(self.unit.items): # find first index of mainweapon
-                if item.weapon:
-                    index_of_mainweapon = index
-                    break
+            index_of_mainweapon = self.unit.items.index(self.unit.getMainWeapon())
             highlightSurf = GC.IMAGESDICT['EquipmentHighlight']
             menu_surf.blit(highlightSurf, (8, 32 + 16 * index_of_mainweapon))
 
@@ -578,7 +581,7 @@ class InfoMenu(StateMachine.State):
             if item.droppable:
                 namefont = GC.FONT['text_green']
                 usefont = GC.FONT['text_green']
-            elif self.unit.canWield(item):
+            elif self.unit.canWield(item) and self.unit.canUse(item):
                 namefont = GC.FONT['text_white']
                 usefont = GC.FONT['text_blue']
             else:
@@ -591,6 +594,23 @@ class InfoMenu(StateMachine.State):
             elif item.c_uses:
                 cur_uses = str(item.c_uses)
                 total_uses = str(item.c_uses.total_uses)
+            elif item.cooldown:
+                uses_height = 23
+                if not item.cooldown.charged:
+                    cur_uses = str(item.cooldown.cd_turns)
+                    total_uses = str(item.cooldown.total_cd_turns)
+                    namefont = GC.FONT['text_light_red']
+                    usefont = GC.FONT['text_light_red']
+                    MenuFunctions.build_cd_groove(menu_surf, (89, index*GC.TILEHEIGHT + 37),
+                                      40, int(round((int(cur_uses)/int(total_uses))*40)), True)
+                else:
+                    cur_uses = str(item.cooldown.cd_uses)
+                    total_uses = str(item.cooldown.total_cd_uses)
+                    namefont = GC.FONT['text_light_green']
+                    usefont = GC.FONT['text_light_green']
+                    MenuFunctions.build_cd_groove(
+                        menu_surf, (89, index*GC.TILEHEIGHT + 37),
+                        40, int(round((int(cur_uses)/int(total_uses))*40)), False)
             else:
                 cur_uses = total_uses = '--'
             usefont.blit(cur_uses, menu_surf, (104 - usefont.size(cur_uses)[0], index*GC.TILEHEIGHT + 24))
@@ -713,3 +733,17 @@ class InfoMenu(StateMachine.State):
 
     def draw_support_surf(self, surf):
         surf.blit(self.support_surf, (96, 0))
+
+    def create_fatigue_surf(self):
+        menu_size = (GC.WINWIDTH - 96, GC.WINHEIGHT)
+        menu_surf = Engine.create_surface(menu_size, transparent=True)
+        max_fatigue = max(1, GC.EQUATIONS.get_max_fatigue(self.unit))
+        self.build_groove(menu_surf, (27, GC.WINHEIGHT - 9), 88, Utility.clamp(self.unit.fatigue / max_fatigue, 0, 1))
+        GC.FONT['text_blue'].blit(str(self.unit.fatigue) + '/' + str(max_fatigue), menu_surf, (56, GC.WINHEIGHT - 17))
+        GC.FONT['text_yellow'].blit(cf.WORDS['Ftg'], menu_surf, (8, GC.WINHEIGHT - 17))
+
+        return menu_surf
+
+    def draw_fatigue_surf(self, surf):
+        menu_position = (96, 0)
+        surf.blit(self.fatigue_surf, (menu_position))

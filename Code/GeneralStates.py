@@ -12,12 +12,6 @@ from . import StateMachine, Action, Aura, BaseMenuSurf, ClassData
 import logging
 logger = logging.getLogger(__name__)
 
-def wizard_mode(eventList, gameStateObj):
-    for event in eventList:
-        if event.type == Engine.KEYUP:
-            if event.key == Engine.key_map['d']:
-                gameStateObj.stateMachine.changeState('debug')
-
 class TurnChangeState(StateMachine.State):
     name = 'turn_change'
 
@@ -53,6 +47,9 @@ class TurnChangeState(StateMachine.State):
                 gameStateObj.stateMachine.changeState('dialogue')
             # === INTRO SCRIPTS ===
             if (gameStateObj.turncount - 1) <= 0: # If it is the beginning of the game
+                for unit in gameStateObj.get_units_in_party():
+                    # Give out fatigue statuses if necessary
+                    Action.ChangeFatigue(unit, 0).do(gameStateObj)
                 # Prep Screen
                 if metaDataObj['preparationFlag']:
                     gameStateObj.stateMachine.changeState('prep_main')
@@ -91,6 +88,7 @@ class TurnChangeState(StateMachine.State):
             gameStateObj.stateMachine.changeState('end_step')
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
+        gameStateObj.input_manager.process_input(eventList)
         return 'repeat'
 
 class FreeState(StateMachine.State):
@@ -120,9 +118,15 @@ class FreeState(StateMachine.State):
             gameStateObj.stateMachine.changeState('turn_change')
             return 'repeat'
 
+        if any(unit.isDying for unit in gameStateObj.allunits):
+            gameStateObj.stateMachine.changeState('dying')
+
         event = gameStateObj.input_manager.process_input(eventList)
+        # Check if both L and R are pressed down, if so, debug state!
+        if cf.OPTIONS['cheat'] and 'AUX' in gameStateObj.input_manager.key_down_events and 'INFO' in gameStateObj.input_manager.key_down_events:
+            gameStateObj.stateMachine.changeState('debug')
         # Show R unit status screen
-        if event == 'INFO':
+        elif event == 'INFO':
             if gameStateObj.cursor.getHoveredUnit(gameStateObj):
                 CustomObjects.handle_info_key(gameStateObj, metaDataObj)
             else:  # Show enemy attacks otherwise
@@ -130,7 +134,7 @@ class FreeState(StateMachine.State):
                 gameStateObj.boundary_manager.toggle_all_enemy_attacks()
         elif event == 'AUX':
             CustomObjects.handle_aux_key(gameStateObj)
-        # Enter movement state       
+        # Enter movement state
         elif event == 'SELECT':
             # If is a unit that is not done with its turn
             gameStateObj.cursor.currentSelectedUnit = [unit for unit in gameStateObj.allunits if
@@ -139,8 +143,8 @@ class FreeState(StateMachine.State):
                 gameStateObj.cursor.currentSelectedUnit = gameStateObj.cursor.currentSelectedUnit[0]
                 # Ie a player controlled character
                 if gameStateObj.cursor.currentSelectedUnit.team == 'player' and \
-                        'un_selectable' not in gameStateObj.cursor.currentSelectedUnit.status_bundle: 
-                    GC.SOUNDDICT['Select 3'].play() 
+                        'un_selectable' not in gameStateObj.cursor.currentSelectedUnit.status_bundle:
+                    GC.SOUNDDICT['Select 3'].play()
                     gameStateObj.stateMachine.changeState('move')
                 else:
                     GC.SOUNDDICT['Select 2'].play()
@@ -158,8 +162,7 @@ class FreeState(StateMachine.State):
         elif event == 'START':
             GC.SOUNDDICT['Select 5'].play()
             gameStateObj.stateMachine.changeState('minimap')
-        elif cf.OPTIONS['cheat']:
-            wizard_mode(eventList, gameStateObj)
+
         # Moved down here so it is done last
         gameStateObj.cursor.back_pressed = gameStateObj.input_manager.is_pressed('BACK')
         gameStateObj.cursor.take_input(eventList, gameStateObj)
@@ -201,7 +204,7 @@ class OptionsMenuState(StateMachine.State):
                 options.insert(1, cf.WORDS['Turnwheel'])
                 info_desc.insert(1, cf.WORDS['Turnwheel_desc'])
             gameStateObj.activeMenu = \
-                MenuFunctions.ChoiceMenu(None, options, 'auto', 
+                MenuFunctions.ChoiceMenu(None, options, 'auto',
                                          gameStateObj=gameStateObj, info_desc=info_desc)
         else:
             self.re_load = True
@@ -229,16 +232,13 @@ class OptionsMenuState(StateMachine.State):
             GC.SOUNDDICT['Select 1'].play()
             if selection == cf.WORDS['End']:
                 if cf.OPTIONS['Confirm End']:
-                    # Create child menu with additional options
-                    options = [cf.WORDS['Yes'], cf.WORDS['No']]
-                    gameStateObj.childMenu = MenuFunctions.ChoiceMenu(selection, options, 'child', gameStateObj=gameStateObj)
+                    gameStateObj.shared_state_data['option_owner'] = selection
                     gameStateObj.stateMachine.changeState('optionchild')
                 else:
-                    gameStateObj.stateMachine.changeState('turn_change')
+                    gameStateObj.stateMachine.changeState('ai')
             elif selection == cf.WORDS['Suspend'] or selection == cf.WORDS['Save']:
                 # Create child menu with additional options
-                options = [cf.WORDS['Yes'], cf.WORDS['No']]
-                gameStateObj.childMenu = MenuFunctions.ChoiceMenu(selection, options, 'child', gameStateObj=gameStateObj)
+                gameStateObj.shared_state_data['option_owner'] = selection
                 gameStateObj.stateMachine.changeState('optionchild')
             elif selection == cf.WORDS['Objective']:
                 gameStateObj.stateMachine.changeState('status_menu')
@@ -252,6 +252,7 @@ class OptionsMenuState(StateMachine.State):
                 gameStateObj.stateMachine.changeState('transition_out')
             elif selection == cf.WORDS['Turnwheel']:
                 if cf.OPTIONS['cheat'] or gameStateObj.game_constants.get('current_turnwheel_uses', 1) > 0:
+                # if gameStateObj.game_constants.get('current_turnwheel_uses', 1) > 0:
                     gameStateObj.stateMachine.changeState('turnwheel')
                 else:
                     banner = Banner.customBanner(cf.WORDS['Turnwheel_empty'])
@@ -271,16 +272,26 @@ class OptionsMenuState(StateMachine.State):
         return mapSurf
 
 class OptionChildState(StateMachine.State):
-    name = 'optionschild'
+    name = 'optionchild'
 
-    def take_input(self, eventList, gameStateObj, metaDataObj): 
-        event = gameStateObj.input_manager.process_input(eventList) 
+    def begin(self, gameStateObj, metaDataObj):
+        # Create child menu with additional options
+        if gameStateObj.activeMenu:
+            options = [cf.WORDS['Yes'], cf.WORDS['No']]
+            selection = gameStateObj.shared_state_data['option_owner']
+            self.menu = MenuFunctions.ChoiceMenu(selection, options, 'child', gameStateObj=gameStateObj)
+        else:
+            # gameStateObj.stateMachine.back()
+            self.menu = None
+
+    def take_input(self, eventList, gameStateObj, metaDataObj):
+        event = gameStateObj.input_manager.process_input(eventList)
         if event == 'DOWN':
             GC.SOUNDDICT['Select 6'].play()
-            gameStateObj.childMenu.moveDown()
+            self.menu.moveDown()
         elif event == 'UP':
             GC.SOUNDDICT['Select 6'].play()
-            gameStateObj.childMenu.moveUp()
+            self.menu.moveUp()
 
         # Back - to optionsmenu state
         elif event == 'BACK':
@@ -288,34 +299,56 @@ class OptionChildState(StateMachine.State):
             gameStateObj.stateMachine.back()
 
         elif event == 'SELECT':
-            selection = gameStateObj.childMenu.getSelection()
+            selection = self.menu.getSelection()
             if selection == cf.WORDS['Yes']:
                 GC.SOUNDDICT['Select 1'].play()
-                if gameStateObj.childMenu.owner == cf.WORDS['End']:
+                if self.menu.owner == cf.WORDS['End']:
                     # gameStateObj.stateMachine.changeState('turn_change')
                     gameStateObj.stateMachine.changeState('ai')
-                elif gameStateObj.childMenu.owner == cf.WORDS['Suspend']:
+                    gameStateObj.activeMenu = None
+                elif self.menu.owner == cf.WORDS['Suspend']:
                     gameStateObj.stateMachine.back() # Go all the way back if we choose YES
                     gameStateObj.stateMachine.back()
                     logger.info('Suspending game...')
                     SaveLoad.suspendGame(gameStateObj, 'Suspend', hard_loc='Suspend')
                     gameStateObj.save_slots = None # Reset save slots
                     gameStateObj.stateMachine.clear()
-                    gameStateObj.stateMachine.changeState('start_start') 
-                elif gameStateObj.childMenu.owner == cf.WORDS['Save']:
+                    gameStateObj.stateMachine.changeState('start_start')
+                    gameStateObj.activeMenu = None
+                elif self.menu.owner == cf.WORDS['Save']:
                     gameStateObj.stateMachine.back()
                     gameStateObj.stateMachine.back()
                     logger.info('Creating battle save...')
                     gameStateObj.save_kind = 'Battle'
                     gameStateObj.stateMachine.changeState('start_save')
                     gameStateObj.stateMachine.changeState('transition_out')
-                gameStateObj.activeMenu = None
+                    gameStateObj.activeMenu = None
+                elif self.menu.owner in (cf.WORDS['Discard'], cf.WORDS['Storage']):
+                    item = gameStateObj.shared_state_data['option_item']
+                    cur_unit = gameStateObj.shared_state_data['option_unit']
+                    if item in cur_unit.items:
+                        Action.do(Action.DiscardItem(gameStateObj.activeMenu.owner, item), gameStateObj)
+                    gameStateObj.activeMenu.currentSelection = 0 # Reset selection?
+                    if cur_unit.items: # If the unit still has some items
+                        gameStateObj.stateMachine.back()
+                        gameStateObj.stateMachine.back()
+                    else: # If the unit has no more items, head all the way back to menu.
+                        gameStateObj.activeMenu = None
+                        gameStateObj.stateMachine.back()
+                        gameStateObj.stateMachine.back()
+                        gameStateObj.stateMachine.back()
             else:
                 GC.SOUNDDICT['Select 4'].play()
                 gameStateObj.stateMachine.back()
 
+    def draw(self, gameStateObj, metaDataObj):
+        mapSurf = StateMachine.State.draw(self, gameStateObj, metaDataObj)
+        if self.menu:
+            self.menu.draw(mapSurf, gameStateObj)
+        return mapSurf
+
     def end(self, gameStateObj, metaDataObj):
-        gameStateObj.childMenu = None # Remove menu
+        self.menu = None # Remove menu
 
 class MoveState(StateMachine.State):
     name = 'move'
@@ -339,8 +372,13 @@ class MoveState(StateMachine.State):
 
         # Play move script if it exists
         if not self.started:
+            global_move_script_name = 'Data/global_moveScript.txt'
+            if os.path.exists(global_move_script_name):
+                global_move_script = Dialogue.Dialogue_Scene(global_move_script_name, unit=cur_unit)
+                gameStateObj.message.append(global_move_script)
+                gameStateObj.stateMachine.changeState('transparent_dialogue')
             move_script_name = 'Data/Level' + str(gameStateObj.game_constants['level']) + '/moveScript.txt'
-            if gameStateObj.tutorial_mode and os.path.exists(move_script_name):
+            if os.path.exists(move_script_name):
                 move_script = Dialogue.Dialogue_Scene(move_script_name, unit=cur_unit)
                 gameStateObj.message.append(move_script)
                 gameStateObj.stateMachine.changeState('transparent_dialogue')
@@ -351,7 +389,9 @@ class MoveState(StateMachine.State):
         cur_unit = gameStateObj.cursor.currentSelectedUnit
         # Show R unit status screen
         if event == 'INFO':
-            CustomObjects.handle_info_key(gameStateObj, metaDataObj, cur_unit, one_unit_only=True)
+            unit = gameStateObj.grid_manager.get_unit_node(gameStateObj.cursor.position)
+            if unit:
+                CustomObjects.handle_info_key(gameStateObj, metaDataObj, unit, no_movement=True)
 
         elif event == 'AUX':
             gameStateObj.cursor.setPosition(cur_unit.position, gameStateObj)
@@ -379,7 +419,7 @@ class MoveState(StateMachine.State):
                     cur_unit.current_move_action = Action.Move(cur_unit, gameStateObj.cursor.position)
                     Action.execute(cur_unit.current_move_action, gameStateObj)
                     gameStateObj.stateMachine.changeState('menu')
-                  
+
             # If the cursor is on a validMove that is not contiguous with a unit
             elif gameStateObj.cursor.position in self.validMoves:
                 if gameStateObj.grid_manager.get_unit_node(gameStateObj.cursor.position):
@@ -420,6 +460,9 @@ class CantoWaitState(StateMachine.State):
     def begin(self, gameStateObj, metaDataObj):
         cur_unit = gameStateObj.cursor.currentSelectedUnit
         cur_unit.sprite.change_state('selected', gameStateObj)
+        
+        # Play sound on first creation
+        GC.SOUNDDICT['Select 2'].play()
         # Create menu
         gameStateObj.activeMenu = MenuFunctions.ChoiceMenu(cur_unit, [cf.WORDS['Wait']], 'auto', gameStateObj=gameStateObj)
 
@@ -431,11 +474,13 @@ class CantoWaitState(StateMachine.State):
             CustomObjects.handle_info_key(gameStateObj, metaDataObj, cur_unit, one_unit_only=True)
 
         elif event == 'SELECT':
+            GC.SOUNDDICT['Select 1'].play()
             gameStateObj.stateMachine.clear()
             gameStateObj.stateMachine.changeState('free')
             cur_unit.wait(gameStateObj) # Canto
 
         elif event == 'BACK':
+            GC.SOUNDDICT['Select 4'].play()
             cur_unit.move_back(gameStateObj)
             gameStateObj.stateMachine.back()
 
@@ -444,8 +489,9 @@ class CantoWaitState(StateMachine.State):
 
 class MenuState(StateMachine.State):
     name = 'menu'
-    normal_options = {cf.WORDS[word] for word in ['Item', 'Wait', 'Take', 'Give', 'Rescue', 'Trade', 'Drop', 'Visit', 'Armory', 'Vendor', 'Spells', 'Attack', 'Steal', 'Shove']}
-    
+    normal_options = {cf.WORDS[word] for word in ['Item', 'Wait', 'Take', 'Give', 'Rescue', 'Trade', 'Drop', 
+        'Convoy', 'Visit', 'Armory', 'Vendor', 'Spells', 'Attack', 'Steal', 'Shove']}
+
     def begin(self, gameStateObj, metaDataObj):
         gameStateObj.cursor.drawState = 0
         # gameStateObj.boundary_manager.draw_flag = 1
@@ -485,7 +531,7 @@ class MenuState(StateMachine.State):
         # Play menu script if it exists
         if not self.started:
             menu_script_name = 'Data/Level' + str(gameStateObj.game_constants['level']) + '/menuScript.txt'
-            if gameStateObj.tutorial_mode and os.path.exists(menu_script_name):
+            if os.path.exists(menu_script_name):
                 menu_script = Dialogue.Dialogue_Scene(menu_script_name, unit=cur_unit)
                 gameStateObj.message.append(menu_script)
                 gameStateObj.stateMachine.changeState('transparent_dialogue')
@@ -515,7 +561,7 @@ class MenuState(StateMachine.State):
             options.append(cf.WORDS['Arrive'])
         if 'Weapon' in gameStateObj.map.tile_info_dict[cur_unit.position]:
             weapon = gameStateObj.map.tile_info_dict[cur_unit.position]['Weapon']
-            if cur_unit.canWield(weapon):
+            if cur_unit.canWield(weapon) and cur_unit.canUse(weapon):
                 options.append(weapon.name)
         # If the unit is standing on a switch
         if 'Switch' in gameStateObj.map.tile_info_dict[cur_unit.position]:
@@ -527,16 +573,17 @@ class MenuState(StateMachine.State):
         if spell_targets:
             options.append(cf.WORDS['Spells'])
         # Active Skills
-        for status in cur_unit.status_effects:
-            if status.combat_art and status.combat_art.is_activated() and status.combat_art.check_charged():
-                if status.combat_art.basic_check(cur_unit, gameStateObj) and \
-                        status.combat_art.check_valid(cur_unit, gameStateObj):
-                    options.append(status.name)
-            if status.activated_item and status.activated_item.check_charged():
-                if status.activated_item.check_valid(cur_unit, gameStateObj):
-                    options.append(status.name)
-            if status.steal and len(cur_unit.items) < cf.CONSTANTS['max_items'] and cur_unit.getStealPartners(gameStateObj):
-                options.append(cf.WORDS['Steal'])
+        if not cur_unit.hasAttacked:
+            for status in cur_unit.status_effects:
+                if status.combat_art and status.combat_art.is_activated() and status.combat_art.check_charged():
+                    if status.combat_art.basic_check(cur_unit, gameStateObj) and \
+                            status.combat_art.check_valid(cur_unit, gameStateObj):
+                        options.append(status.name)
+                if status.activated_item and status.activated_item.check_charged():
+                    if status.activated_item.check_valid(cur_unit, gameStateObj):
+                        options.append(status.name)
+                if status.steal and len(cur_unit.items) < cf.CONSTANTS['max_items'] and cur_unit.getStealPartners(gameStateObj):
+                    options.append(cf.WORDS['Steal'])
         if 'Mindless' not in cur_unit.tags:
             # If the unit is adjacent to a unit it can talk to
             for adjunit in adjunits:
@@ -568,20 +615,22 @@ class MenuState(StateMachine.State):
             if not cur_unit.hasAttacked:
                 tile_info = gameStateObj.map.tile_info_dict
                 tiles = gameStateObj.map.tiles
-                unlock_key = cur_unit.get_unlock_key()
+                unlock_keys = cur_unit.get_unlock_keys()
                 if 'locktouch' in cur_unit.status_bundle:
                     if cf.WORDS['Locked'] in tile_info[cur_unit.position]:
                         options.append(cf.WORDS['Unlock'])
                     elif any(cf.WORDS['Locked'] in tile_info[tile.position] for tile in adjtiles):
                         options.append(cf.WORDS['Unlock'])
-                elif unlock_key:
-                    if cf.WORDS['Locked'] in tile_info[cur_unit.position] and tiles[cur_unit.position].name in unlock_key.key.split(','):
-                        options.append(cf.WORDS['Unlock'])
-                    else:
-                        for tile in adjtiles:
-                            if cf.WORDS['Locked'] in tile_info[tile.position] and tile.name in unlock_key.key.split(','):
-                                options.append(cf.WORDS['Unlock'])
-                                break
+                elif unlock_keys:
+                    for unlock_key in unlock_keys:
+                        if cf.WORDS['Locked'] in tile_info[cur_unit.position] and tiles[cur_unit.position].name in unlock_key.key.split(','):
+                            options.append(cf.WORDS['Unlock'])
+                            break
+                        else:
+                            for tile in adjtiles:
+                                if cf.WORDS['Locked'] in tile_info[tile.position] and tile.name in unlock_key.key.split(','):
+                                    options.append(cf.WORDS['Unlock'])
+                                    break
             # If the unit is on a searchable tile
             if 'Search' in gameStateObj.map.tile_info_dict[cur_unit.position] and not cur_unit.hasAttacked:
                 options.append(cf.WORDS['Search'])
@@ -591,14 +640,14 @@ class MenuState(StateMachine.State):
                     # if at least one adjacent, passable position is free of units
                     tile = gameStateObj.map.tiles[adjposition]
                     trv = gameStateObj.get_unit_from_id(cur_unit.TRV)
-                    if not (adjposition in current_unit_positions) and tile.get_mcost(trv) < trv.stats['MOV']: 
+                    if not (adjposition in current_unit_positions) and tile.get_mcost(trv) < trv.stats['MOV']:
                         options.append(cf.WORDS['Drop'])
                         break
             if adjallies:
                 # If the unit does not have a traveler
                 if not cur_unit.TRV and not cur_unit.hasAttacked:
                     # AID has to be higher than CON
-                    if any((adjally.getWeight() <= cur_unit.getAid() and not adjally.TRV and 'Mounted' not in adjally.tags) for adjally in adjallies):
+                    if any((adjally.getWeight() <= cur_unit.getAid() and not adjally.TRV) for adjally in adjallies):
                         options.append(cf.WORDS['Rescue'])
                     if any((adjally.TRV and gameStateObj.get_unit_from_id(adjally.TRV).getWeight() <= cur_unit.getAid()) for adjally in adjallies):
                         options.append(cf.WORDS['Take'])
@@ -610,8 +659,18 @@ class MenuState(StateMachine.State):
             if cur_unit.items:
                 options.append(cf.WORDS['Item'])
             if adjallies:
-                if any([unit.team == cur_unit.team and not unit.isSummon() for unit in adjallies]):
+                # Check rescued units also
+                for unit in adjallies:
+                    if unit.TRV:
+                        adjallies.append(gameStateObj.get_unit_from_id(unit.TRV))
+                if any([unit.team == cur_unit.team for unit in adjallies]):
                     options.append(cf.WORDS['Trade'])
+            # If the unit has access to the convoy
+            if gameStateObj.game_constants['Convoy'] and 'Convoy' in cur_unit.tags:
+                options.append(cf.WORDS['Convoy'])
+            elif gameStateObj.game_constants['Convoy'] and adjallies:
+                if any(['AdjConvoy' in unit.tags and unit.team == cur_unit.team for unit in adjallies]):
+                    options.append(cf.WORDS['Convoy'])
         options.append(cf.WORDS['Wait'])
 
         # Filter by legal options here
@@ -625,7 +684,7 @@ class MenuState(StateMachine.State):
             gameStateObj.activeMenu = MenuFunctions.ChoiceMenu(cur_unit, options, 'auto', limit=8, color_control=opt_color, gameStateObj=gameStateObj)
         else:
             logger.error('Somehow ended up in menu with no options!')
-        
+
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
         first_push = self.fluid_helper.update(gameStateObj)
@@ -670,14 +729,15 @@ class MenuState(StateMachine.State):
             logger.debug('Player selected %s', selection)
             gameStateObj.highlight_manager.remove_highlights()
 
-            if selection in [status.name for status in cur_unit.status_effects]:
+            # Only applies to statuses that are combat arts or have activated items
+            if selection in [status.name for status in cur_unit.status_effects if status.combat_art or status.activated_item]:
                 for status in cur_unit.status_effects:
                     if selection == status.name:
                         if status.combat_art:
                             status_obj = StatusCatalog.statusparser(status.combat_art.status_id, gameStateObj)
                             status.add_action = Action.AddStatus(cur_unit, status_obj)
                             Action.do(status.add_action, gameStateObj)
-                            cur_unit.current_skill = status                            
+                            cur_unit.current_skill = status
                             gameStateObj.stateMachine.changeState('weapon')
                         elif status.activated_item:
                             valid_choices = status.activated_item.get_choices(cur_unit, gameStateObj)
@@ -702,7 +762,7 @@ class MenuState(StateMachine.State):
             elif selection == cf.WORDS['Item']:
                 gameStateObj.stateMachine.changeState('item')
             elif selection == cf.WORDS['Trade']:
-                valid_choices = [unit.position for unit in cur_unit.getTeamPartners(gameStateObj) if not unit.isSummon()]
+                valid_choices = [unit.position for unit in cur_unit.getTeamPartners(gameStateObj)]
                 cur_unit.validPartners = CustomObjects.MapSelectHelper(valid_choices)
                 closest_position = cur_unit.validPartners.get_closest(cur_unit.position)
                 gameStateObj.cursor.setPosition(closest_position, gameStateObj)
@@ -715,7 +775,7 @@ class MenuState(StateMachine.State):
                 gameStateObj.stateMachine.changeState('stealselect')
             elif selection == cf.WORDS['Rescue']:
                 good_positions = [unit.position for unit in cur_unit.getValidPartners(gameStateObj)
-                                  if unit.getWeight() <= cur_unit.getAid() and not unit.TRV and 'Mounted' not in unit.tags]
+                                  if unit.getWeight() <= cur_unit.getAid() and not unit.TRV]
                 cur_unit.validPartners = CustomObjects.MapSelectHelper(good_positions)
                 closest_position = cur_unit.validPartners.get_closest(cur_unit.position)
                 gameStateObj.cursor.setPosition(closest_position, gameStateObj)
@@ -791,8 +851,15 @@ class MenuState(StateMachine.State):
                     gameStateObj.cursor.setPosition(closest_position, gameStateObj)
                     gameStateObj.stateMachine.changeState('unlockselect')
                 elif len(avail_pos) == 1:
-                    item = cur_unit.get_unlock_key()
-                    cur_unit.unlock(avail_pos[0], item, gameStateObj)
+                    pos = avail_pos[0]
+                    unlock_keys = cur_unit.get_unlock_keys()
+                    if 'locktouch' in cur_unit.status_bundle:
+                        cur_unit.unlock(pos, None, gameStateObj)
+                    elif unlock_keys:
+                        for unlock_key in unlock_keys:
+                            if gameStateObj.map.tiles[pos].name in unlock_key.key.split(','):
+                                cur_unit.unlock(pos, unlock_key, gameStateObj)
+                                break
                 else:
                     logger.error('Made a mistake in allowing unit to access Unlock!')
             elif selection == cf.WORDS['Search']:
@@ -802,19 +869,22 @@ class MenuState(StateMachine.State):
                 gameStateObj.stateMachine.changeState('dialogue')
                 Action.do(Action.HasAttacked(cur_unit), gameStateObj)
             elif selection == cf.WORDS['Talk']:
-                positions = [unit.position for unit in gameStateObj.allunits if unit.position in cur_unit.getAdjacentPositions(gameStateObj) and 
+                positions = [unit.position for unit in gameStateObj.allunits if unit.position in cur_unit.getAdjacentPositions(gameStateObj) and
                              (cur_unit.name, unit.name) in gameStateObj.talk_options]
                 cur_unit.validPartners = CustomObjects.MapSelectHelper(positions)
                 closest_position = cur_unit.validPartners.get_closest(cur_unit.position)
                 gameStateObj.cursor.setPosition(closest_position, gameStateObj)
                 gameStateObj.stateMachine.changeState('talkselect')
             elif selection == cf.WORDS['Support']:
-                positions = [unit.position for unit in gameStateObj.allunits if unit.position in cur_unit.getAdjacentPositions(gameStateObj) and 
+                positions = [unit.position for unit in gameStateObj.allunits if unit.position in cur_unit.getAdjacentPositions(gameStateObj) and
                              gameStateObj.support.can_support(cur_unit.id, unit.id)]
                 cur_unit.validPartners = CustomObjects.MapSelectHelper(positions)
                 closest_position = cur_unit.validPartners.get_closest(cur_unit.position)
                 gameStateObj.cursor.setPosition(closest_position, gameStateObj)
                 gameStateObj.stateMachine.changeState('supportselect')
+            elif selection == cf.WORDS['Convoy']:
+                gameStateObj.stateMachine.changeState('convoy_transfer')
+                gameStateObj.stateMachine.changeState('transition_out')
             elif selection == cf.WORDS['Wait']:
                 gameStateObj.stateMachine.clear()
                 gameStateObj.stateMachine.changeState('free')
@@ -836,7 +906,7 @@ class ItemState(StateMachine.State):
             gameStateObj.activeMenu = MenuFunctions.ChoiceMenu(cur_unit, options, 'auto', gameStateObj=gameStateObj)
         else:
             gameStateObj.activeMenu.updateOptions(options)
-    
+
     def take_input(self, eventList, gameStateObj, metaDataObj):
         gameStateObj.activeMenu.updateOptions(gameStateObj.cursor.currentSelectedUnit.items)
         event = gameStateObj.input_manager.process_input(eventList)
@@ -847,7 +917,7 @@ class ItemState(StateMachine.State):
             GC.SOUNDDICT['Select 6'].play()
             gameStateObj.activeMenu.moveDown(first_push)
             gameStateObj.info_surf = None
-        elif 'UP' in directions: 
+        elif 'UP' in directions:
             GC.SOUNDDICT['Select 6'].play()
             gameStateObj.activeMenu.moveUp(first_push)
             gameStateObj.info_surf = None
@@ -884,13 +954,15 @@ class ItemChildState(StateMachine.State):
         current_unit = gameStateObj.cursor.currentSelectedUnit
         # Create child menu with additional options
         options = []
-        if selection.weapon and current_unit.canWield(selection):
+        if selection.weapon and current_unit.canWield(selection) and current_unit.canUse(selection):
             options.append(cf.WORDS['Equip'])
-        if selection.usable:
+        if selection.usable and current_unit.canUse(selection):
             use = True
             if selection.heal and current_unit.currenthp >= current_unit.stats['HP']:
                 use = False
             elif selection.c_uses and selection.c_uses.uses <= 0:
+                use = False
+            elif selection.cooldown and not selection.cooldown.charged:
                 use = False
             elif selection.booster and not current_unit.can_use_booster(selection):
                 use = False
@@ -906,7 +978,7 @@ class ItemChildState(StateMachine.State):
 
         if not options:
             options.append(cf.WORDS['Placeholder'])
-             
+
         self.menu = MenuFunctions.ChoiceMenu(selection, options, 'child', gameStateObj=gameStateObj)
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
@@ -934,7 +1006,7 @@ class ItemChildState(StateMachine.State):
                 if item.booster: # Does not use interact object
                     if cur_unit.items: # If the unit still has some items
                         gameStateObj.stateMachine.back()
-                    else: # If the unit has no more items, head all the way back to menu. 
+                    else: # If the unit has no more items, head all the way back to menu.
                         gameStateObj.activeMenu = None
                         gameStateObj.stateMachine.back()
                         gameStateObj.stateMachine.back()
@@ -955,15 +1027,10 @@ class ItemChildState(StateMachine.State):
                 gameStateObj.activeMenu.currentSelection = 0 # Reset selection?
                 gameStateObj.stateMachine.back()
             elif selection == cf.WORDS['Storage'] or selection == cf.WORDS['Discard']:
-                if item in cur_unit.items:
-                    Action.do(Action.DiscardItem(gameStateObj.activeMenu.owner, item), gameStateObj)
-                gameStateObj.activeMenu.currentSelection = 0 # Reset selection?
-                if cur_unit.items: # If the unit still has some items
-                    gameStateObj.stateMachine.back()
-                else: # If the unit has no more items, head all the way back to menu. 
-                    gameStateObj.activeMenu = None
-                    gameStateObj.stateMachine.back()
-                    gameStateObj.stateMachine.back()
+                gameStateObj.shared_state_data['option_owner'] = selection
+                gameStateObj.shared_state_data['option_item'] = item
+                gameStateObj.shared_state_data['option_unit'] = cur_unit
+                gameStateObj.stateMachine.changeState('optionchild')
 
     def end(self, gameStateObj, metaDataObj):
         self.menu = None
@@ -981,7 +1048,7 @@ class WeaponState(StateMachine.State):
     name = 'weapon'
 
     def get_options(self, unit, gameStateObj):
-        options = [item for item in unit.items if item.weapon and unit.canWield(item)]  # Apply straining for skill
+        options = [item for item in unit.items if item.weapon and unit.canWield(item) and unit.canUse(item)]  # Apply straining for skill
         if unit.current_skill:
             options = unit.current_skill.combat_art.valid_weapons(unit, options)
         # Only shows options I can use now
@@ -1055,7 +1122,7 @@ class SpellWeaponState(WeaponState):
     name = 'spellweapon'
 
     def get_options(self, unit, gameStateObj):
-        options = [item for item in unit.items if item.spell and unit.canWield(item)]
+        options = [item for item in unit.items if item.spell and unit.canWield(item) and unit.canUse(item)]
         # Only shows options I can use
         options = [item for item in options if unit.getValidSpellTargetPositions(gameStateObj, item)]
         return options
@@ -1088,7 +1155,7 @@ class AttackState(StateMachine.State):
 
         # Play attack script if it exists
         attack_script_name = 'Data/Level' + str(gameStateObj.game_constants['level']) + '/attackScript.txt'
-        if gameStateObj.tutorial_mode and os.path.exists(attack_script_name):
+        if os.path.exists(attack_script_name):
             attack_script = Dialogue.Dialogue_Scene(attack_script_name, unit=self.attacker)
             gameStateObj.message.append(attack_script)
             gameStateObj.stateMachine.changeState('transparent_dialogue')
@@ -1169,7 +1236,7 @@ class SpellState(StateMachine.State):
         if valid_targets:
             attacker.validSpellTargets = CustomObjects.MapSelectHelper(valid_targets)
             if spell.heal:
-                units = sorted([gameStateObj.grid_manager.get_unit_node(pos) for pos in valid_targets], 
+                units = sorted([gameStateObj.grid_manager.get_unit_node(pos) for pos in valid_targets],
                                key=lambda unit: unit.currenthp)
                 closest_position = units[0].position
             else:
@@ -1250,7 +1317,7 @@ class SpellState(StateMachine.State):
                         # Handle fight quote
                         if defender and isinstance(defender, UnitObject.UnitObject):
                             defender.handle_fight_quote(attacker, gameStateObj)
-                            
+
             elif targets == 'Tile' or targets == 'TileNoUnit':
                 if spell.extra_select and spell.extra_select_index < len(spell.extra_select):
                     self.handle_extra_select(gameStateObj, spell)
@@ -1315,7 +1382,7 @@ class SpellState(StateMachine.State):
         if gameStateObj.cursor.currentSelectedUnit:
             if targets == 'Tile' or targets == 'TileNoUnit':
                 attacker.displaySpellInfo(mapSurf, gameStateObj)
-            elif gameStateObj.cursor.currentHoveredUnit: 
+            elif gameStateObj.cursor.currentHoveredUnit:
                 attacker.displaySpellInfo(mapSurf, gameStateObj, gameStateObj.cursor.currentHoveredUnit)
         return mapSurf
 
@@ -1330,6 +1397,7 @@ class SelectState(StateMachine.State):
         if self.name in cf.WORDS:
             self.pennant = Banner.Pennant(cf.WORDS[self.name])
         self.fluid_helper = InputManager.FluidScroll(cf.OPTIONS['Cursor Speed'])
+        self.TRV_select: bool = False
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
         cur_unit = gameStateObj.cursor.currentSelectedUnit
@@ -1339,21 +1407,36 @@ class SelectState(StateMachine.State):
 
         if 'DOWN' in directions:
             GC.SOUNDDICT['Select 6'].play()
+            self.TRV_select = False
             # Get closet unit in down position
-            new_position = cur_unit.validPartners.get_down(gameStateObj.cursor.position)
-            gameStateObj.cursor.setPosition(new_position, gameStateObj)
+            if self.name == 'tradeselect':
+                target_unit = gameStateObj.grid_manager.get_unit_node(gameStateObj.cursor.position)
+                traveler = None
+                if target_unit.TRV:
+                    traveler = gameStateObj.get_unit_from_id(target_unit.TRV)
+                if traveler and traveler.team == cur_unit.team:
+                    self.TRV_select = True
+                else:
+                    new_position = cur_unit.validPartners.get_down(gameStateObj.cursor.position)
+                    gameStateObj.cursor.setPosition(new_position, gameStateObj)
+            else:
+                new_position = cur_unit.validPartners.get_down(gameStateObj.cursor.position)
+                gameStateObj.cursor.setPosition(new_position, gameStateObj)
         elif 'UP' in directions:
             GC.SOUNDDICT['Select 6'].play()
+            self.TRV_select = False
             # Get closet unit in up position
             new_position = cur_unit.validPartners.get_up(gameStateObj.cursor.position)
             gameStateObj.cursor.setPosition(new_position, gameStateObj)
         if 'LEFT' in directions:
             GC.SOUNDDICT['Select 6'].play()
+            self.TRV_select = False
             # Get closest unit in left position
             new_position = cur_unit.validPartners.get_left(gameStateObj.cursor.position)
             gameStateObj.cursor.setPosition(new_position, gameStateObj)
         elif 'RIGHT' in directions:
             GC.SOUNDDICT['Select 6'].play()
+            self.TRV_select = False
             # Get closest unit in right position
             new_position = cur_unit.validPartners.get_right(gameStateObj.cursor.position)
             gameStateObj.cursor.setPosition(new_position, gameStateObj)
@@ -1374,6 +1457,10 @@ class SelectState(StateMachine.State):
                 gameStateObj.stateMachine.changeState('combat')
                 cur_unit.current_skill = None
             elif self.name == 'tradeselect':
+                if self.TRV_select:
+                    target = gameStateObj.grid_manager.get_unit_node(gameStateObj.cursor.position)
+                    traveler = gameStateObj.get_unit_from_id(target.TRV)
+                    gameStateObj.info_menu_struct['trade_partner'] = traveler
                 gameStateObj.stateMachine.changeState('trade')
             elif self.name == 'stealselect':
                 gameStateObj.stateMachine.changeState('steal')
@@ -1382,7 +1469,8 @@ class SelectState(StateMachine.State):
                 if gameStateObj.cursor.currentHoveredUnit:
                     Action.do(Action.Rescue(cur_unit, gameStateObj.cursor.currentHoveredUnit), gameStateObj)
                     if cur_unit.has_canto():
-                        gameStateObj.stateMachine.changeState('menu') # Should this be inside or outside the if statement - Is an error to not get here
+                        gameStateObj.cursor.setPosition(cur_unit.position, gameStateObj)
+                        gameStateObj.stateMachine.changeState('move')
                     else:
                         gameStateObj.stateMachine.changeState('free')
                         cur_unit.wait(gameStateObj)
@@ -1427,8 +1515,15 @@ class SelectState(StateMachine.State):
                     gameStateObj.stateMachine.changeState('dialogue')
             elif self.name == 'unlockselect':
                 gameStateObj.stateMachine.changeState('menu')
-                item = cur_unit.get_unlock_key()
-                cur_unit.unlock(gameStateObj.cursor.position, item, gameStateObj)
+                unlock_keys = cur_unit.get_unlock_keys()
+                pos = gameStateObj.cursor.position
+                if 'locktouch' in cur_unit.status_bundle:
+                    cur_unit.unlock(pos, None, gameStateObj)
+                elif unlock_keys:
+                    for unlock_key in unlock_keys:
+                        if gameStateObj.map.tiles[pos].name in unlock_key.key.split(','):
+                            cur_unit.unlock(pos, unlock_key, gameStateObj)
+                            break
             else:
                 logger.warning('SelectState does not have valid name: %s', self.name)
                 gameStateObj.stateMachine.back() # Shouldn't happen
@@ -1438,7 +1533,7 @@ class SelectState(StateMachine.State):
         if self.pennant:
             self.pennant.draw(mapSurf, gameStateObj)
         if self.name == 'tradeselect':
-            MenuFunctions.drawTradePreview(mapSurf, gameStateObj)
+            MenuFunctions.drawTradePreview(mapSurf, gameStateObj, display_traveler=self.TRV_select)
         elif self.name == 'stealselect':
             MenuFunctions.drawTradePreview(mapSurf, gameStateObj, steal=True)
         elif self.name == 'rescueselect':
@@ -1451,28 +1546,29 @@ class TradeState(StateMachine.State):
     def begin(self, gameStateObj, metaDataObj):
         gameStateObj.cursor.drawState = 0
         gameStateObj.info_surf = None
-        initiator = gameStateObj.cursor.currentSelectedUnit
-        initiator.sprite.change_state('chosen', gameStateObj)
-        partner = gameStateObj.cursor.getHoveredUnit(gameStateObj)
-        options1 = initiator.items
-        options2 = partner.items
-        gameStateObj.activeMenu = MenuFunctions.TradeMenu(initiator, partner, options1, options2)
+        self.initiator = gameStateObj.cursor.currentSelectedUnit
+        self.initiator.sprite.change_state('chosen', gameStateObj)
+        if gameStateObj.info_menu_struct.get('trade_partner'):  # can force a trade partner
+            self.partner = gameStateObj.info_menu_struct.get('trade_partner')
+        else:
+            self.partner = gameStateObj.cursor.getHoveredUnit(gameStateObj)
+        options1 = self.initiator.items
+        options2 = self.partner.items
+        gameStateObj.activeMenu = MenuFunctions.TradeMenu(self.initiator, self.partner, options1, options2)
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
-        initiator = gameStateObj.cursor.currentSelectedUnit
-        partner = gameStateObj.cursor.getHoveredUnit(gameStateObj) 
-        gameStateObj.activeMenu.updateOptions(initiator.items, partner.items)
+        gameStateObj.activeMenu.updateOptions(self.initiator.items, self.partner.items)
 
         event = gameStateObj.input_manager.process_input(eventList)
-        self.fluid_helper.update(gameStateObj)
+        first_push = self.fluid_helper.update(gameStateObj)
         directions = self.fluid_helper.get_directions()
 
         if 'DOWN' in directions:
-            GC.SOUNDDICT['Select 6'].play()
-            gameStateObj.activeMenu.moveDown()
+            if gameStateObj.activeMenu.moveDown(first_push):
+                GC.SOUNDDICT['Select 6'].play()
         elif 'UP' in directions:
-            GC.SOUNDDICT['Select 6'].play()
-            gameStateObj.activeMenu.moveUp()
+            if gameStateObj.activeMenu.moveUp(first_push):
+                GC.SOUNDDICT['Select 6'].play()
 
         if event == 'RIGHT':
             if gameStateObj.activeMenu.moveRight():
@@ -1482,19 +1578,17 @@ class TradeState(StateMachine.State):
                 GC.SOUNDDICT['TradeRight'].play()
 
         elif event == 'BACK':
-            if gameStateObj.activeMenu.selection2 is not None:
+            if gameStateObj.activeMenu.is_selection_set():
                 GC.SOUNDDICT['Select 4'].play()
-                gameStateObj.activeMenu.selection2 = None
+                gameStateObj.activeMenu.unsetSelection()
             else:
                 GC.SOUNDDICT['Select 4'].play()
                 gameStateObj.activeMenu = None
-                # if initiator.hasTraded:
-                #     initiator.hasMoved = True
                 gameStateObj.stateMachine.changeState('menu')
-                                         
+
         elif event == 'SELECT':
             GC.SOUNDDICT['Select 1'].play()
-            if gameStateObj.activeMenu.selection2 is not None:
+            if gameStateObj.activeMenu.is_selection_set():
                 gameStateObj.activeMenu.tradeItems(gameStateObj)
             else:
                 gameStateObj.activeMenu.setSelection()
@@ -1550,7 +1644,8 @@ class StealState(StateMachine.State):
             # self.initiator.add_item(selection)
             Action.do(Action.HasAttacked(self.initiator), gameStateObj)
             if self.initiator.has_canto():
-                gameStateObj.stateMachine.changeState('menu')
+                gameStateObj.cursor.setPosition(self.initiator.position, gameStateObj)
+                gameStateObj.stateMachine.changeState('move')
             else:
                 gameStateObj.stateMachine.clear()
                 gameStateObj.stateMachine.changeState('free')
@@ -1558,8 +1653,9 @@ class StealState(StateMachine.State):
             gameStateObj.activeMenu = None
             # Give exp
             exp = cf.CONSTANTS['steal_exp']
-            gameStateObj.exp_gain_struct = (self.initiator, exp, None, 'init')
-            gameStateObj.stateMachine.changeState('exp_gain')
+            if exp > 0:
+                gameStateObj.exp_gain_struct = (self.initiator, exp, None, 'init')
+                gameStateObj.stateMachine.changeState('exp_gain')
             # Display banner -- opposite order
             self.initiator.handle_steal_banner(selection, gameStateObj)
 
@@ -1611,7 +1707,8 @@ class RepairState(StealState):
             Action.do(Action.RepairItem(selection), gameStateObj)
             Action.do(Action.HasAttacked(self.initiator), gameStateObj)
             if self.initiator.has_canto():
-                gameStateObj.stateMachine.changeState('menu')
+                gameStateObj.cursor.setPosition(self.initiator.position, gameStateObj)
+                gameStateObj.stateMachine.changeState('move')
             else:
                 gameStateObj.stateMachine.clear()
                 gameStateObj.stateMachine.changeState('free')
@@ -1636,14 +1733,19 @@ class ArenaState(StateMachine.State):
         if not self.started:
             # Get data needed
             self.unit = gameStateObj.cursor.currentSelectedUnit
+            if not self.unit.position:
+                self.unit.position = (0, 0)
             self.opponent = None
             self.legend, self.opponent_weapon_id, self.wager = self.get_arena_info(self.unit, gameStateObj)
 
             # Set up assuming things go to plan
             self.state_machine = CustomObjects.StateMachine('wager')
-            self.display_message = self.get_dialog(cf.WORDS['Arena_open'] % self.wager)
+            if self.wager > 0:
+                self.display_message = self.get_dialog(cf.WORDS['Arena_open'] % self.wager)
+            else:
+                self.display_message = self.get_dialog(cf.WORDS['Arena_open_no_wager'])
             self.wager_menu = MenuFunctions.ChoiceMenu(
-                self.unit, [cf.WORDS['Yes'], cf.WORDS['No']], (112, 28), 
+                self.unit, [cf.WORDS['Yes'], cf.WORDS['No']], (112, 28),
                 background='ActualTransparent', horizontal=True)
 
             # Set up draw
@@ -1679,11 +1781,11 @@ class ArenaState(StateMachine.State):
             gameStateObj.stateMachine.changeState("transition_in")
             return 'repeat'
 
-    def get_arena_info(self, unit, gameStateObj):
+    def get_random_legend(self, unit, gameStateObj):
         my_klass = self.unit.klass
         my_tier = ClassData.class_dict[my_klass]['tier']
         max_level = ClassData.class_dict[my_klass]['max_level']
-        classes_in_my_tier = [c for c, v in ClassData.class_dict.items() if v['tier'] == my_tier and 
+        classes_in_my_tier = [c for c, v in ClassData.class_dict.items() if v['tier'] == my_tier and
                               'ArenaIgnore' not in v['tags'] and v['max_level'] == max_level]
         legend = None
         old = static_random.get_other_random_state()
@@ -1697,13 +1799,32 @@ class ArenaState(StateMachine.State):
             weapon_id = self.get_weapon_id_from_klass(new_klass, gameStateObj)
             if not weapon_id:
                 continue
-            legend = {'team': 'enemy', 'event_id': "0", 'class': new_klass, 
+            legend = {'team': 'enemy', 'event_id': "0", 'class': new_klass,
                       'level': str(level_rng), 'items': weapon_id, 'position': self.unit.position,
                       'ai': 'None'}
-
+        
         new = static_random.get_other_random_state()
         Action.do(Action.RecordOtherRandomState(old, new), gameStateObj)
-        
+
+        return legend, weapon_id, percent
+
+    def get_arena_info(self, unit, gameStateObj):
+        num_times_visited = int(gameStateObj.level_constants['_' + str(unit.id) + '_arena_uses'])
+        event_id = 'arena%d' % num_times_visited
+        if event_id in gameStateObj.allreinforcements:
+            uid, pos = gameStateObj.allreinforcements[event_id]
+            enemy = gameStateObj.get_unit(uid)
+            items = ','.join([item.id for item in enemy.items])
+            legend = {'team': 'enemy', 'event_id': "0", 'class': enemy.klass,
+                      'level': str(enemy.level), 'items': items, 'position': self.unit.position,
+                      'ai': 'None'}
+            weapon_id = enemy.getMainWeapon().id if enemy.getMainWeapon() else None
+            percent = 1.
+            if not weapon_id:
+                legend, weapon_id, percent = self.get_random_legend(unit, gameStateObj)
+        else:
+            legend, weapon_id, percent = self.get_random_legend(unit, gameStateObj)
+
         wager = int(percent * (cf.CONSTANTS['arena_wager_max'] - cf.CONSTANTS['arena_wager_min']) + cf.CONSTANTS['arena_wager_min'])
         wager = min(gameStateObj.get_money(), wager)
 
@@ -1747,9 +1868,10 @@ class ArenaState(StateMachine.State):
                 GC.SOUNDDICT['Select 1'].play()
                 selection = self.wager_menu.getSelection()
                 if selection == cf.WORDS['Yes']:
-                    GC.SOUNDDICT['GoldExchange'].play()
-                    Action.execute(Action.GiveGold(-self.wager, gameStateObj.current_party), gameStateObj)
-                    self.money_counter_disp.start(-self.wager)
+                    if self.wager > 0:
+                        GC.SOUNDDICT['GoldExchange'].play()
+                        Action.execute(Action.GiveGold(-self.wager, gameStateObj.current_party), gameStateObj)
+                        self.money_counter_disp.start(-self.wager)
 
                     # Actually create unit here!
                     self.opponent = SaveLoad.create_unit_from_legend(self.legend, gameStateObj.allunits, None, None, gameStateObj)
@@ -1774,8 +1896,9 @@ class ArenaState(StateMachine.State):
                     gameStateObj.level_constants['_' + str(self.unit.id) + '_arena_uses'] += 1
                     gameStateObj.combatInstance = \
                         Interaction.start_combat(
-                            gameStateObj, self.unit, self.opponent, self.unit.position, 
-                            [], self.unit_weapon, arena=True)
+                            gameStateObj, self.unit, self.opponent, self.unit.position,
+                            [], self.unit_weapon, arena=self.name)
+                    gameStateObj.stateMachine.back()
                     gameStateObj.stateMachine.changeState('combat')
                 if self.display_message.waiting: # Remove waiting check
                     self.display_message.waiting = False
@@ -1789,7 +1912,7 @@ class ArenaState(StateMachine.State):
                 if self.display_message.done:
                     gameStateObj.stateMachine.changeState('transition_pop')
                 if self.display_message.waiting: # Remove waiting check
-                    self.display_message.waiting = False 
+                    self.display_message.waiting = False
 
     def update(self, gameStateObj, metaDataObj):
         StateMachine.State.update(self, gameStateObj, metaDataObj)
@@ -1833,13 +1956,7 @@ class ArenaState(StateMachine.State):
 
     def finish(self, gameStateObj, metaDataObj):
         self.background = None
-        gameStateObj.activeMenu = gameStateObj.hidden_active    
-        if self.opponent and not self.opponent.dead:
-            # self.opponent.position = None
-            self.opponent.dead = True  # Forget about this unit permanently!
-            Action.execute(Action.LeaveMap(self.opponent), gameStateObj)
-            # Reset player 1's position now that we've removed his fighter
-            Action.execute(Action.SimpleMove(self.unit, self.unit.position), gameStateObj)
+        gameStateObj.activeMenu = gameStateObj.hidden_active
 
 class FeatChoiceState(StateMachine.State):
     name = 'feat_choice'
@@ -1878,7 +1995,7 @@ class FeatChoiceState(StateMachine.State):
             self.info = not self.info
 
         elif event == 'INFO':
-            GC.SOUNDDICT['Select 2'].play()                        
+            GC.SOUNDDICT['Select 2'].play()
             CustomObjects.handle_info_key(gameStateObj, metaDataObj, gameStateObj.cursor.currentSelectedUnit, one_unit_only=True)
 
         elif event == 'SELECT':
@@ -1917,21 +2034,21 @@ class AIState(StateMachine.State):
 
         if gameStateObj.ai_build_flag:
             # Get list of units to process for this turn
-            gameStateObj.ai_unit_list = [unit for unit in gameStateObj.allunits if unit.position and not unit.isDone() and 
-                                         unit.team == gameStateObj.phase.get_current_phase()]
+            gameStateObj.ai_unit_list = [unit for unit in gameStateObj.allunits if unit.position and not unit.isDone()
+                                         and unit.team == gameStateObj.phase.get_current_phase()]
             # Sort by distance to closest enemy (ascending)
             gameStateObj.ai_unit_list = sorted(gameStateObj.ai_unit_list, key=lambda unit: unit.distance_to_closest_enemy(gameStateObj))
-            gameStateObj.ai_unit_list = sorted(gameStateObj.ai_unit_list, key=lambda unit: unit.ai.ai_group)
+            gameStateObj.ai_unit_list = sorted(gameStateObj.ai_unit_list, key=lambda unit: unit.ai.ai_group or '')
             gameStateObj.ai_unit_list = sorted(gameStateObj.ai_unit_list, key=lambda unit: unit.ai.priority, reverse=True)
             # Reverse, because we will be popping them off the end
             gameStateObj.ai_unit_list.reverse()
 
             gameStateObj.ai_build_flag = False
             gameStateObj.ai_current_unit = None
-    
+
     def update(self, gameStateObj, metaDataObj):
         StateMachine.State.update(self, gameStateObj, metaDataObj)
-        if not any(unit.isActive or unit.isDying for unit in gameStateObj.allunits):
+        if not any(unit.isDying for unit in gameStateObj.allunits):
             # Get new unit from list if no unit or unit is not on map anymore
             if (not gameStateObj.ai_current_unit or not gameStateObj.ai_current_unit.position) and gameStateObj.ai_unit_list:
                 gameStateObj.ai_current_unit = gameStateObj.ai_unit_list.pop()
@@ -1950,29 +2067,32 @@ class AIState(StateMachine.State):
                     other_pos = gameStateObj.ai_current_unit.ai.target_to_interact_with
                     if gameStateObj.ai_current_unit.ai.position_to_move_to and \
                             gameStateObj.ai_current_unit.ai.position_to_move_to != gameStateObj.ai_current_unit.position:
-                        gameStateObj.cameraOffset.center2(gameStateObj.ai_current_unit.position, gameStateObj.ai_current_unit.ai.position_to_move_to)      
+                        gameStateObj.cameraOffset.center2(gameStateObj.ai_current_unit.position, gameStateObj.ai_current_unit.ai.position_to_move_to)
                     elif other_pos and Utility.calculate_distance(gameStateObj.ai_current_unit.position, other_pos) <= GC.TILEY - 2: # Leeway
                         gameStateObj.cameraOffset.center2(gameStateObj.ai_current_unit.position, other_pos)
-                    else: 
+                    else:
                         gameStateObj.cursor.setPosition(gameStateObj.ai_current_unit.position, gameStateObj)
                     gameStateObj.stateMachine.changeState('move_camera')
                 if gameStateObj.ai_current_unit.hasRunAI():
                     logger.debug('current_ai %s done with turn.', gameStateObj.ai_current_unit)
                     # The unit is now done with AI
                     # If the unit actually did something, doesn't have canto plus, and isn't going into combat, then can now wait.
-                    if did_something and not gameStateObj.ai_current_unit.has_canto_plus() and not gameStateObj.stateMachine.inList('combat'):
+                    if did_something and not gameStateObj.ai_current_unit.has_canto_plus() and not gameStateObj.stateMachine.inList('combat'):                        
                         gameStateObj.ai_current_unit.wait(gameStateObj)
                     gameStateObj.ai_current_unit = None
 
             else: # Done
                 logger.debug('Done with AI')
-                for unit in gameStateObj.ai_unit_list:
-                    unit.reset_ai()
-                gameStateObj.ai_build_flag = True
-                gameStateObj.ai_unit_list = []
-                gameStateObj.ai_current_unit = None
+                self.finish(gameStateObj, metaDataObj)
                 gameStateObj.stateMachine.changeState('turn_change')
                 return 'repeat'
+
+    def finish(self, gameStateObj, metaDataObj):
+        for unit in gameStateObj.ai_unit_list:
+            unit.reset_ai()
+        gameStateObj.ai_build_flag = True
+        gameStateObj.ai_unit_list = []
+        gameStateObj.ai_current_unit = None
 
 class DialogueState(StateMachine.State):
     name = 'dialogue'
@@ -1984,6 +2104,7 @@ class DialogueState(StateMachine.State):
         self.hurry_up_time = 0
 
     def begin(self, gameStateObj, metaDataObj):
+        logger.info('Begin Dialogue State')
         cf.CONSTANTS['Unit Speed'] = 120
         if self.name != 'transparent_dialogue':
             gameStateObj.cursor.drawState = 0
@@ -2005,6 +2126,7 @@ class DialogueState(StateMachine.State):
                 if last_hit > 200:  # How long it will pause before moving on to next section
                     if self.message.dialog[-1].waiting:
                         GC.SOUNDDICT['Select 1'].play()
+                        # GC.SOUNDDICT['Talk_Boop'].play()
                         self.message.dialog_unpause()
                         self.hurry_up_time = 0
                     else:
@@ -2023,8 +2145,9 @@ class DialogueState(StateMachine.State):
 
     def end_dialogue_state(self, gameStateObj, metaDataObj):
         logger.debug('Ending dialogue state')
+        last_message = None
         if self.message and gameStateObj.message:
-            gameStateObj.message.pop()
+            last_message = gameStateObj.message.pop()
         # Did any tiles change?
         if self.message.reset_boundary_manager:
             gameStateObj.boundary_manager.reset(gameStateObj)
@@ -2040,7 +2163,8 @@ class DialogueState(StateMachine.State):
                 gameStateObj.message.append(outro_script)
                 gameStateObj.stateMachine.changeState('dialogue')
                 gameStateObj.statedict['outroScriptDone'] = True
-            else:
+            elif not os.path.exists(metaDataObj['outroScript']) or last_message.scene == metaDataObj['outroScript']:  # We can only leave from an outroScript
+                # Prevents leaving from an internal interactScript within the outroScript
                 gameStateObj.increment_supports()
                 gameStateObj.clean_up()
                 if not cf.CONSTANTS['overworld'] and isinstance(gameStateObj.game_constants['level'], int):
@@ -2058,12 +2182,12 @@ class DialogueState(StateMachine.State):
                             num_levels = num
                     except:
                         continue
-                
-                gameStateObj.stateMachine.clear()       
+
+                gameStateObj.stateMachine.clear()
                 if cf.CONSTANTS['overworld']:
                     gameStateObj.stateMachine.changeState('overworld')
                     gameStateObj.save_kind = 'Overworld'
-                    gameStateObj.stateMachine.changeState('start_save') 
+                    gameStateObj.stateMachine.changeState('start_save')
                 elif (not isinstance(gameStateObj.game_constants['level'], int)) or gameStateObj.game_constants['level'] > num_levels:
                     gameStateObj.stateMachine.changeState('start_start')
                 else:
@@ -2075,6 +2199,11 @@ class DialogueState(StateMachine.State):
             gameStateObj.stateMachine.clear()
             gameStateObj.stateMachine.changeState('start_start')
             gameStateObj.stateMachine.changeState('game_over')
+        elif self.message.turnwheel_flag:
+            if self.message.turnwheel_flag == 2:
+                gameStateObj.stateMachine.changeState('force_turnwheel')
+            else:
+                gameStateObj.stateMachine.changeState('turnwheel')
         elif self.message.battle_save_flag:
             gameStateObj.stateMachine.changeState('battle_save')
         elif self.message.reset_state_flag:
@@ -2084,6 +2213,7 @@ class DialogueState(StateMachine.State):
         # Don't need to fade to normal if we're just heading back to a event script
         # Engine.music_thread.fade_to_normal(gameStateObj, metaDataObj)
 
+        logger.info('Repeat Dialogue State!')
         return 'repeat'
 
     def update(self, gameStateObj, metaDataObj):
@@ -2091,15 +2221,18 @@ class DialogueState(StateMachine.State):
         # Handle state transparency
         if self.name == 'transparent_dialogue' and gameStateObj.stateMachine.get_under_state(self):
             gameStateObj.stateMachine.get_under_state(self).update(gameStateObj, metaDataObj)
-        if self.message:
-            self.message.update(gameStateObj, metaDataObj)
-        else:
-            gameStateObj.stateMachine.back()
-            return 'repeat'
+        # Only if top of state stack
+        if not gameStateObj.stateMachine.state or gameStateObj.stateMachine.state[-1] == self:
+            if self.message:
+                self.message.update(gameStateObj, metaDataObj)
+            else:
+                logger.info('Done with Dialogue State!')
+                gameStateObj.stateMachine.back()
+                return 'repeat'
 
-        if self.message.done and self.message.current_state == "Processing":
-            gameStateObj.stateMachine.back()
-            return self.end_dialogue_state(gameStateObj, metaDataObj)
+            if self.message.done and self.message.current_state == "Processing":
+                gameStateObj.stateMachine.back()
+                return self.end_dialogue_state(gameStateObj, metaDataObj)
 
     def draw(self, gameStateObj, metaDataObj):
         if self.name == 'transparent_dialogue' and gameStateObj.stateMachine.get_under_state(self):
@@ -2129,6 +2262,8 @@ class VictoryState(StateMachine.State):
             level_statistic = gameStateObj.statistics[-1]
         else:
             level_statistic = None
+            print("You need to call 'victory_screen' in a different script than the one you call 'win_game' in!")
+            print("'win_game' isn't processed until the end of the script it is called in.")
         self.state = 'init'
         self.stat_surf = self.create_stat_surf(level_statistic)
         self.stat_surf_target = self.stat_surf.get_height() + 4
@@ -2142,7 +2277,7 @@ class VictoryState(StateMachine.State):
             turns = str(stats.turncount)
             mvp = stats.get_mvp()
         else:
-            turns ='0'
+            turns = '0'
             mvp = 'None'
         menu_width = 96
         bg = BaseMenuSurf.CreateBaseMenuSurf((menu_width, 40), 'BaseMenuBackgroundOpaque')
@@ -2199,25 +2334,26 @@ class CombatState(StateMachine.State):
 
     def begin(self, gameStateObj, metaDataObj):
         gameStateObj.cursor.drawState = 0
-        self.skip = False
         self.unit_surf = Engine.create_surface((gameStateObj.map.width * GC.TILEWIDTH, gameStateObj.map.height * GC.TILEHEIGHT), transparent=True)
         self.animation_combat = isinstance(gameStateObj.combatInstance, Interaction.AnimationCombat)
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
         if event == 'START':
-            self.skip = True
-            gameStateObj.combatInstance.skip()
+            if gameStateObj.combatInstance.skip:
+                gameStateObj.combatInstance.end_skip()
+            else:
+                gameStateObj.combatInstance.start_skip()
         elif event == 'BACK':
             if gameStateObj.combatInstance.arena:
                 GC.SOUNDDICT['Select 4'].play()
-                gameStateObj.combatInstance.arena_stop()
+                gameStateObj.combatInstance.arena_stop(gameStateObj)
 
     def update(self, gameStateObj, metaDataObj):
         StateMachine.State.update(self, gameStateObj, metaDataObj)
-        combatisover = gameStateObj.combatInstance.update(gameStateObj, metaDataObj, self.skip)
-        while self.skip and not combatisover and not self.animation_combat:
-            combatisover = gameStateObj.combatInstance.update(gameStateObj, metaDataObj, self.skip)
+        combatisover = gameStateObj.combatInstance.update(gameStateObj, metaDataObj)
+        while gameStateObj.combatInstance.skip and not combatisover and not self.animation_combat:
+            combatisover = gameStateObj.combatInstance.update(gameStateObj, metaDataObj)
         if combatisover: # StateMachine.State changing is handled in combat's clean_up function
             gameStateObj.combatInstance = None
             # gameStateObj.stateMachine.back() NOT NECESSARY! DONE BY the COMBAT INSTANCES CLEANUP!
@@ -2319,6 +2455,25 @@ class PhaseChangeState(StateMachine.State):
         self.save_state(gameStateObj)
         logger.debug('Phase Start')
         Action.do(Action.LockTurnwheel(gameStateObj.phase.get_current_phase() != 'player'), gameStateObj)
+
+        # Handle cooldown items
+        units = [unit for unit in gameStateObj.allunits if 
+                 (unit.team == gameStateObj.phase.get_current_phase() and unit.position)]
+        for unit in units:
+            for item in unit.items:
+                if item.cooldown and not item.cooldown.charged:
+                    Action.do(Action.CooloffItem(item), gameStateObj)
+
+        # Handle fatigue
+        if cf.CONSTANTS['fatigue'] and gameStateObj.turncount == 1 and gameStateObj.phase.get_current_phase() == 'player':
+            gameStateObj.refresh_fatigue()
+
+        # Turn by turn fatigue
+        if cf.CONSTANTS['fatigue'] == 3:
+            for unit in units:
+                if unit.team == 'player':
+                    Action.do(Action.ChangeFatigue(unit, 1), gameStateObj)
+
         # All units can now move and attack, etc.
         Action.do(Action.ResetAll([unit for unit in gameStateObj.allunits if not unit.dead]), gameStateObj)
         # Mark phase used to be here
@@ -2329,7 +2484,7 @@ class PhaseChangeState(StateMachine.State):
     def end(self, gameStateObj, metaDataObj):
         logger.debug('Phase End')
         Engine.music_thread.fade_to_normal(gameStateObj)
-    
+
     # Save state at beginning of each turn
     def save_state(self, gameStateObj):
         if gameStateObj.phase.get_current_phase() == 'player':
@@ -2358,12 +2513,12 @@ class StatusState(StateMachine.State):
     def begin(self, gameStateObj, metaDataObj):
         gameStateObj.cursor.drawState = 0
         if not hasattr(self, 'new'):
-            if self.name == 'status':   
+            if self.name == 'status':
                 gameStateObj.status = StatusCatalog.Status_Processor(gameStateObj, True)
             elif self.name == 'end_step':
                 gameStateObj.status = StatusCatalog.Status_Processor(gameStateObj, False)
             self.new = True
-            
+
     def update(self, gameStateObj, metaDataObj):
         StateMachine.State.update(self, gameStateObj, metaDataObj)
         # Update status object
@@ -2371,6 +2526,14 @@ class StatusState(StateMachine.State):
         count = 0 # Only process as much as 10 units in a frame.
         while processing and count < 10:
             output = gameStateObj.status.update(gameStateObj)
+            if any(unit.isDying for unit in gameStateObj.allunits):
+                processing = False
+                gameStateObj.stateMachine.changeState('dying')
+                for unit in [u for u in gameStateObj.allunits if u.isDying]:
+                    # Death quote
+                    scene = Dialogue.Dialogue_Scene(metaDataObj['death_quotes'], unit=unit)
+                    gameStateObj.message.append(scene)
+                    gameStateObj.stateMachine.changeState('dialogue')
             if output == 'Done':
                 self.leave(gameStateObj)
                 processing = False
@@ -2404,6 +2567,11 @@ class ItemGainState(StateMachine.State):
 
     def begin(self, gameStateObj, metaDataObj):
         gameStateObj.cursor.drawState = 0
+        # Need to return to the correct background when using a booster from
+        # the prep or base menus
+        under_state = gameStateObj.stateMachine.get_under_state(self)
+        if under_state and under_state.name == 'prep_items_choices':
+            under_state.set_background(gameStateObj)
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
@@ -2449,13 +2617,13 @@ class ItemDiscardState(StateMachine.State):
         if 'Convoy' in gameStateObj.game_constants:
             self.pennant = Banner.Pennant(cf.WORDS['Storage_info'])
         else:
-            self.pennant = Banner.Pennant(cf.WORDS['Discard'])
+            self.pennant = Banner.Pennant(cf.WORDS['Discard_info'])
         options = gameStateObj.cursor.currentSelectedUnit.items
         if not gameStateObj.activeMenu:
             ignore = [option.locked for option in options]
             color = ['text_grey' if i else 'text_white' for i in ignore]
             gameStateObj.activeMenu = \
-                MenuFunctions.ChoiceMenu(gameStateObj.cursor.currentSelectedUnit, options, 'auto', 
+                MenuFunctions.ChoiceMenu(gameStateObj.cursor.currentSelectedUnit, options, 'auto',
                                          gameStateObj=gameStateObj, color_control=color, ignore=ignore)
         else:
             gameStateObj.activeMenu.updateOptions(options)
@@ -2518,7 +2686,7 @@ class ItemDiscardChildState(StateMachine.State):
         gameStateObj.info_surf = None
         gameStateObj.cursor.drawState = 0
         self.menu = gameStateObj.stateMachine.state[-2].child_menu
-        
+
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
         first_push = self.fluid_helper.update(gameStateObj)
@@ -2547,7 +2715,7 @@ class ItemDiscardChildState(StateMachine.State):
                 gameStateObj.activeMenu.currentSelection = 0 # Reset selection?
                 if len(gameStateObj.activeMenu.owner.items) > cf.CONSTANTS['max_items']: # If the unit still has >5 items
                     gameStateObj.stateMachine.back() # back to itemdiscard
-                else: # If the unit has <=5 items, just head back before item discard 
+                else: # If the unit has <=5 items, just head back before item discard
                     gameStateObj.activeMenu = None
                     gameStateObj.stateMachine.back()
                     gameStateObj.stateMachine.back()
@@ -2579,7 +2747,7 @@ class BattleSaveState(StateMachine.State):
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
-                    
+
         if event == 'RIGHT':
             GC.SOUNDDICT['Select 6'].play()
             self.menu.moveRight()
@@ -2625,23 +2793,33 @@ class DialogOptionsState(StateMachine.State):
     name = 'dialog_options'
 
     def begin(self, gameStateObj, metaDataObj):
-        name, header, options = gameStateObj.game_constants['choice']
+        name, header, options, arrangement = gameStateObj.game_constants['choice']
         self.name = name
-        self.menu = MenuFunctions.HorizOptionsMenu(header, options)
+
+        # Determine if it should be a horizontal or vertical menu.
+        if arrangement in ('v', 'vertical'):
+            self.menu = MenuFunctions.VertOptionsMenu(header, options)
+            self.menu_arrangement = 'v'
+        else:
+            if arrangement not in ('h', 'horizontal'):
+                logger.debug('The option menu arrangement was detected as neither vertical or horizontal')
+            self.menu = MenuFunctions.HorizOptionsMenu(header, options)
+            self.menu_arrangement = 'h'
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
         event = gameStateObj.input_manager.process_input(eventList)
-                    
-        if event == 'RIGHT':
+
+        if event == 'RIGHT' and self.menu_arrangement == 'h' \
+            or event == 'DOWN' and self.menu_arrangement == 'v':
             GC.SOUNDDICT['Select 6'].play()
             self.menu.moveRight()
-        elif event == 'LEFT':
+        elif event == 'LEFT' and self.menu_arrangement == 'h' \
+            or event == 'UP' and self.menu_arrangement == 'v':
             GC.SOUNDDICT['Select 6'].play()
             self.menu.moveLeft()
 
         elif event == 'BACK':
-            GC.SOUNDDICT['Select 4'].play()
-            gameStateObj.stateMachine.back()
+            GC.SOUNDDICT['Error'].play()
 
         elif event == 'SELECT':
             selection = self.menu.getSelection()
@@ -2709,7 +2887,7 @@ class ShopState(StateMachine.State):
 
             # Get items
             items_for_sale = [ItemMethods.itemparser(item) for item in itemids.split(',') if item]
-            
+
             topleft = (GC.WINWIDTH//2 - 80 + 4, 3*GC.WINHEIGHT//8+8)
             self.shopMenu = MenuFunctions.ShopMenu(self.unit, items_for_sale, topleft, limit=5, mode="Buy", buy_value_mod=self.buy_value_mod)
             self.myMenu = MenuFunctions.ShopMenu(self.unit, self.unit.items, topleft, limit=5, mode="Sell")
@@ -2744,7 +2922,7 @@ class ShopState(StateMachine.State):
         self.money_counter_disp = MenuFunctions.BriefPopUpDisplay((223, 32))
 
     def take_input(self, eventList, gameStateObj, metaDataObj):
-        event = gameStateObj.input_manager.process_input(eventList) 
+        event = gameStateObj.input_manager.process_input(eventList)
         first_push = self.fluid_helper.update(gameStateObj)
         directions = self.fluid_helper.get_directions()
 
@@ -2754,12 +2932,14 @@ class ShopState(StateMachine.State):
             if event == 'BACK':
                 GC.SOUNDDICT['Select 4'].play()
                 gameStateObj.stateMachine.changeState('transition_pop')
+                if self.name in ('armory', 'market', 'vendor'):
+                    Engine.music_thread.fade_back()
             elif event == 'SELECT':
                 GC.SOUNDDICT['Select 1'].play()
                 if self.display_message.waiting: # Remove waiting check
-                    self.display_message.waiting = False 
-                
-        elif self.stateMachine.getState() == 'choice':           
+                    self.display_message.waiting = False
+
+        elif self.stateMachine.getState() == 'choice':
             if event == 'LEFT':
                 GC.SOUNDDICT['Select 6'].play()
                 self.buy_sell_menu.moveDown()
@@ -2935,12 +3115,16 @@ class ShopState(StateMachine.State):
             if event == 'BACK':
                 GC.SOUNDDICT['Select 4'].play()
                 gameStateObj.stateMachine.back()
+                if self.name in ('armory', 'market', 'vendor'):
+                    Engine.music_thread.fade_back()
             elif event == 'SELECT':
                 GC.SOUNDDICT['Select 1'].play()
                 if self.display_message.done:
                     gameStateObj.stateMachine.back()
+                    if self.name in ('armory', 'market', 'vendor'):
+                        Engine.music_thread.fade_back()
                 if self.display_message.waiting: # Remove waiting check
-                    self.display_message.waiting = False 
+                    self.display_message.waiting = False
 
     def get_dialog(self, text):
         return Dialogue.Dialog(text, 'Narrator', (60, 8), (144, 48), 'text_white', 'ActualTransparent', waiting_cursor_flag=False)
@@ -3016,10 +3200,10 @@ class RepairShopState(StateMachine.State):
             topleft = (GC.WINWIDTH//2 - 80 + 4, 3*GC.WINHEIGHT//8+8)
 
             self.myMenu = MenuFunctions.ShopMenu(
-                self.unit, self.unit.items, topleft, 
+                self.unit, self.unit.items, topleft,
                 limit=5, mode="Repair", buy_value_mod=self.buy_value_mod)
             self.sure_menu = MenuFunctions.ChoiceMenu(
-                self.unit, [cf.WORDS['Yes'], cf.WORDS['No']], (80, 32), 
+                self.unit, [cf.WORDS['Yes'], cf.WORDS['No']], (80, 32),
                 background='ActualTransparent', horizontal=True)
             self.state_machine = CustomObjects.StateMachine('open')
 
@@ -3050,9 +3234,9 @@ class RepairShopState(StateMachine.State):
 
     def get_dialog(self, text):
         return Dialogue.Dialog(text, 'Narrator', (60, 8), (144, 48), 'text_white', 'ActualTransparent', waiting_cursor_flag=False)
-    
+
     def take_input(self, eventList, gameStateObj, metaDataObj):
-        event = gameStateObj.input_manager.process_input(eventList) 
+        event = gameStateObj.input_manager.process_input(eventList)
         first_push = self.fluid_helper.update(gameStateObj)
         directions = self.fluid_helper.get_directions()
 
@@ -3063,10 +3247,11 @@ class RepairShopState(StateMachine.State):
             if event == 'BACK':
                 GC.SOUNDDICT['Select 4'].play()
                 gameStateObj.stateMachine.changeState('transition_pop')
+                Engine.music_thread.fade_back()
             elif event == 'SELECT':
                 GC.SOUNDDICT['Select 1'].play()
                 if self.display_message.waiting: # Remove waiting check
-                    self.display_message.waiting = False 
+                    self.display_message.waiting = False
 
         elif self.state_machine.getState() == 'repair':
             if 'DOWN' in directions:
@@ -3121,7 +3306,7 @@ class RepairShopState(StateMachine.State):
                     self.money_counter_disp.start(-value)
 
                     Action.do(Action.RepairItem(selection), gameStateObj)
-                    
+
                     self.display_message = self.get_dialog(cf.WORDS['Repair_again'])
                     Action.do(Action.HasAttacked(self.unit), gameStateObj)
                     self.myMenu.updateOptions(self.unit.items)
@@ -3137,10 +3322,12 @@ class RepairShopState(StateMachine.State):
             if event == 'BACK':
                 GC.SOUNDDICT['Select 4'].play()
                 gameStateObj.stateMachine.back()
+                Engine.music_thread.fade_back()
             elif event == 'SELECT':
                 GC.SOUNDDICT['Select 1'].play()
                 if self.display_message.done:
                     gameStateObj.stateMachine.back()
+                    Engine.music_thread.fade_back()
                 if self.display_message.waiting: # Remove waiting check
                     self.display_message.waiting = False
 
@@ -3181,7 +3368,7 @@ class RepairShopState(StateMachine.State):
 
     def finish(self, gameStateObj, metaDataObj):
         gameStateObj.background = None
-        gameStateObj.activeMenu = gameStateObj.hidden_active         
+        gameStateObj.activeMenu = gameStateObj.hidden_active
 
 class MinimapState(StateMachine.State):
     name = 'minimap'

@@ -65,12 +65,17 @@ class UnitSprite(object):
         top = y * GC.TILEHEIGHT + self.spriteOffset[1]
 
         # Active Skill Icon
-        if not self.unit.isDying and any(status.active.check_charged() and status.active.required_charge > 0
-                                         for status in self.unit.status_effects if status.active):
-            active_icon = GC.ICONDICT["ActiveSkill"]
-            active_icon = Engine.subsurface(active_icon, (GC.PASSIVESPRITECOUNTER.count*32, 0, 32, 32))
-            topleft = (left - max(0, (active_icon.get_width() - 16)//2), top - max(0, (active_icon.get_height() - 16)//2))
-            surf.blit(active_icon, topleft)
+        if not self.unit.isDying:
+            for status in self.unit.status_effects:
+                if (status.combat_art and status.combat_art.check_charged()
+                   and status.combat_art.get_max() > 0 and status.combat_art.is_activated()) \
+                   or (status.activated_item and status.activated_item.check_charged()
+                   and status.activated_item.get_max() > 0):
+                    active_icon = GC.ICONDICT["ActiveSkill"]
+                    active_icon = Engine.subsurface(active_icon, (GC.PASSIVESPRITECOUNTER.count*32, 0, 32, 32))
+                    topleft = (left - max(0, (active_icon.get_width() - 16)//2), top - max(0, (active_icon.get_height() - 16)//2))
+                    surf.blit(active_icon, topleft)
+                    break
 
         if self.transition_state in WARP_OUT_SET:
             if self.unit.deathCounter:
@@ -209,6 +214,9 @@ class UnitSprite(object):
         # Effective Weapons
         if any(cur_unit.check_effective(item) for item in items):
             draw_marker('Danger')
+        # Stealable Weapons
+        elif self.unit.getStealables() and 'steal' in cur_unit.status_bundle:
+            draw_marker('Stealable')
         # Killer Weapons and Master Weapons and Reaver Weapons
         else:
             for item in items:
@@ -242,7 +250,7 @@ class UnitSprite(object):
                         else:
                             cut_off = int((self.unit.currenthp/float(self.unit.stats['HP']))*12) + 1
                         if gameStateObj.combatInstance and self.unit in gameStateObj.combatInstance.health_bars:
-                            self.current_cut_off = int(float(gameStateObj.combatInstance.health_bars[self.unit].true_hp)/self.unit.stats['HP']*13)
+                            self.current_cut_off = int(min(float(gameStateObj.combatInstance.health_bars[self.unit].true_hp)/self.unit.stats['HP'], 1)*13)
                         else:
                             dt = current_time - self.lastHPUpdate
                             if dt > 50:
@@ -382,13 +390,15 @@ class UnitSprite(object):
             #    self.image_state = 'right'
             #else:
             self.image_state = 'down'
+        elif self.state == 'normal':
+            self.reset_sprite_offset()
 
     def update_state(self, gameStateObj):
         currentTime = Engine.get_time()
         # if self.unit == gameStateObj.cursor.currentSelectedUnit:
         #    print(self.state)
         if self.state == 'normal':
-            if self.unit.isDone() and not self.unit.isDying and not self.unit.isActive:
+            if self.unit.isDone() and not self.unit.isDying:
                 self.image_state = 'gray'
             elif gameStateObj.cursor.currentHoveredUnit == self.unit and self.unit.team == 'player' and gameStateObj.cursor.drawState:
                 self.image_state = 'active'
@@ -451,14 +461,14 @@ class UnitSprite(object):
             elif self.spriteOffset[1] > 0:
                 self.spriteOffset[1] += 2
             if abs(self.spriteOffset[0]) >= GC.TILEWIDTH or abs(self.spriteOffset[1]) >= GC.TILEHEIGHT:
-                self.transition_state = 'normal'
-                self.change_state('normal', gameStateObj)
                 self.spriteOffset = [0, 0]
                 if self.transition_state == 'fake_out':
                     self.unit.die(gameStateObj, event=True)
                 else: # Rescue
                     self.unit.leave(gameStateObj)
                     self.unit.position = None
+                self.transition_state = 'normal'
+                self.change_state('normal', gameStateObj)
 
     def update_transition(self, gameStateObj):
         if self.transition_state in WARP_OUT_SET:

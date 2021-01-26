@@ -2,7 +2,7 @@ from . import GlobalConstants as GC
 from . import configuration as cf
 from . import Counters, Engine
 from . import BaseMenuSurf
-from . import ClassData
+from . import ClassData, TextChunk
 
 class HelpGraph(object):
     def __init__(self, state, unit, gameStateObj):
@@ -127,6 +127,20 @@ class HelpGraph(object):
         self.help_boxes["Strength"].left = "Unit Desc"
         self.help_boxes["Skill"].left = "Unit Desc"
 
+        if cf.CONSTANTS['fatigue'] and self.unit.team == 'player' and \
+                'Fatigue' in gameStateObj.game_constants:
+            self.help_boxes["Fatigue"] = Help_Box("Fatigue", (88, GC.WINHEIGHT - 15), Help_Dialog(cf.WORDS['Ftg_desc']))
+            self.help_boxes["HP"].right = "Fatigue"
+            self.help_boxes["Fatigue"].left = "HP"
+            if skills:
+                for i in range(len(skills)):
+                    self.help_boxes["Skill" + str(i)].down = 'Fatigue'
+                self.help_boxes["Fatigue"].up = "Skill0"
+            else:
+                self.help_boxes["Resistance"].down = "Fatigue"
+                self.help_boxes["Affin"].down = "Fatigue"
+                self.help_boxes['Fatigue'].up = "Resistance"
+
     def populate_equipment(self):
         for index, item in enumerate(self.unit.items):
             pos = (88, GC.TILEHEIGHT*index + 24)
@@ -200,7 +214,7 @@ class HelpGraph(object):
         # Connect them together
         for i in range(len(statuses)):
             self.help_boxes["Status"+str(i)].right = ("Status"+str(i+1)) if i < (len(statuses) - 1) else None
-            self.help_boxes["Status"+str(i)].left = ("Status"+str(i-1)) if i > 0 else None
+            self.help_boxes["Status"+str(i)].left = ("Status"+str(i-1)) if i > 0 else 'HP'
 
         # Supports
         if gameStateObj.support:
@@ -241,13 +255,17 @@ class HelpGraph(object):
                 self.help_boxes["Status"+str(i)].up = "Support"+str(len(supports)-1)
             self.help_boxes["Support" + str(len(supports)-1)].down = "Status0"
         if supports:
-            self.help_boxes['Unit Desc'].right = "Support" + str(min(3, len(statuses) - 1))
-            self.help_boxes['Experience'].right = "Support" + str(min(3, len(statuses) - 1))
-            self.help_boxes['HP'].right = "Support" + str(min(3, len(statuses) - 1))
+            self.help_boxes['Unit Desc'].right = "Support" + str(min(3, len(supports) - 1))
+            self.help_boxes['Experience'].right = "Support" + str(min(3, len(supports) - 1))
+            self.help_boxes['HP'].right = "Support" + str(min(3, len(supports) - 1))
         elif good_weapons:
             self.help_boxes['Unit Desc'].right = "Wexp0"
             self.help_boxes['Experience'].right = "Wexp0"
             self.help_boxes['HP'].right = "Wexp0"
+        elif statuses:
+            self.help_boxes['Unit Desc'].right = "Status0"
+            self.help_boxes['Experience'].right = "Status0"
+            self.help_boxes['HP'].right = "Status0"
 
     def populate_info_menu_default(self):
         self.help_boxes["Unit Desc"] = Help_Box("Unit Desc", (16, 82), Help_Dialog(self.unit.desc))
@@ -350,45 +368,24 @@ class Help_Dialog(Help_Dialog_Base):
         # Set up variables needed for algorithm
         if not description:
             description = ''
-        description_length = self.font.size(description)[0]
         # Hard set num_lines if description is very short.
         if len(description) < 24:
             num_lines = 1
 
-        lines = []
-        for line in range(num_lines):
-            lines.append([])
-        length_reached = False # Whether we've reached over the length of the description
-        which_line = 0 # Which line are we reading
-        # Place description into balanced size lines
-        for character in description:
-            if length_reached and character == ' ':
-                which_line += 1
-                length_reached = False
-                continue
-            lines[which_line].append(character)
-            length_so_far = self.font.size(''.join(lines[which_line]))[0]
-            if length_so_far > description_length//num_lines:
-                length_reached = True
-            elif length_so_far > GC.WINWIDTH - 8:
-                length_reached = True
-        # Reform strings
-        self.strings = []
-        for line in lines:
-            self.strings.append(''.join(line)) 
+        self.strings = TextChunk.split(self.font, description, num_lines)
+
         # Find the greater of the two lengths
         greater_line_len = max([self.font.size(string)[0] for string in self.strings])
         if self.name:
             greater_line_len = max(greater_line_len, self.font.size(self.name)[0])
 
-        size_x = greater_line_len + 24
-        self.width = size_x
+        self.width = greater_line_len + 24
         if name:
             num_lines += 1
-        size_y = self.font.height * num_lines + 16
+        self.height = self.font.height * num_lines + 16
 
-        self.help_surf = BaseMenuSurf.CreateBaseMenuSurf((size_x, size_y), 'MessageWindowBackground')
-        self.h_surf = Engine.create_surface((size_x, size_y + 3), transparent=True)
+        self.help_surf = BaseMenuSurf.CreateBaseMenuSurf((self.width, self.height), 'MessageWindowBackground')
+        self.h_surf = Engine.create_surface((self.width, self.height + 3), transparent=True)
 
     def draw(self, surf, pos):
         time = Engine.get_time()
@@ -411,3 +408,75 @@ class Help_Dialog(Help_Dialog_Base):
                 num_characters -= len(string)
     
         self.final_draw(surf, pos, time, help_surf)
+
+class LevelUpQuote_Dialog(Help_Dialog_Base):
+    def __init__(self, description):
+        self.font = GC.FONT['convo_black']
+        self.last_time = self.start_time = 0
+        self.transition_in = True
+        self.transition_out = False
+        self.waiting_cursor_offset = [0]*20 + [1]*2 + [2]*8 + [1]*2
+        self.waiting_cursor_offset_index = 0
+        self.end_text_position = None
+        
+        # Set up variables needed for algorithm
+        num_lines = 2
+        if self.font.size(description)[0] < 212:
+            num_lines = 1
+
+        self.strings = TextChunk.split(self.font, description, num_lines)
+
+        # Find the greater of the two lengths
+        greater_line_len = max([self.font.size(string)[0] for string in self.strings])
+        self.width = greater_line_len + 28
+        self.height = self.font.height * num_lines + 8
+
+        self.help_surf = BaseMenuSurf.CreateBaseMenuSurf((self.width, self.height), 'MessageWindowBackground')
+        self.h_surf = Engine.create_surface((self.width, self.height + 3), transparent=True)
+
+    def draw(self, surf, pos):
+        time = Engine.get_time()
+        if time > self.last_time + 1000:  # If it's been at least a second since last update
+            self.start_time = time - 16
+        self.last_time = time
+
+        h_surf = Engine.copy_surface(self.help_surf)
+
+        if cf.OPTIONS['Text Speed'] > 0:
+            num_characters = int((time - self.start_time)/float(cf.OPTIONS['Text Speed']))
+        else:
+            num_characters = 1000
+        
+        for index, string in enumerate(self.strings):
+            if num_characters > 0:
+                self.font.blit(string[:num_characters], h_surf, (8, self.font.height*index + 4))
+                if index == len(self.strings) - 1 and len(string[:num_characters]) == len(string):
+                    self.end_text_position = (8 + self.font.size(string[:num_characters])[0], self.font.height*index + 4)
+                num_characters -= len(string)
+    
+        if self.transition_in:
+            h_surf = self.handle_transition_in(time, h_surf)
+        elif self.transition_out:
+            h_surf = self.handle_transition_out(time, h_surf)
+
+        if pos[0] + h_surf.get_width()//2 > GC.WINWIDTH - 4:
+            new_pos = (GC.WINWIDTH - h_surf.get_width() - 4, pos[1] - h_surf.get_height()//2)
+        else:
+            new_pos = (pos[0] - h_surf.get_width()//2, pos[1] - h_surf.get_height()//2)
+        surf.blit(h_surf, new_pos)
+
+        # Message tail
+        if not self.transition_in and not self.transition_out:
+            message_tail_pos = (pos[0], pos[1] + h_surf.get_height()//2 - 2)
+            tail_surf = GC.IMAGESDICT['MessageWindowTail']
+            surf.blit(tail_surf, message_tail_pos)
+
+        # Draw waiting cursor
+        if self.end_text_position:
+            self.waiting_cursor_offset_index += 1
+            if self.waiting_cursor_offset_index > len(self.waiting_cursor_offset) - 1:
+                self.waiting_cursor_offset_index = 0
+
+            cursor_pos = (2 + new_pos[0] + self.end_text_position[0],
+                          5 + new_pos[1] + self.end_text_position[1] + self.waiting_cursor_offset[self.waiting_cursor_offset_index])
+            surf.blit(GC.IMAGESDICT['WaitingCursor'], cursor_pos)

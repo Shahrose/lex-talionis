@@ -1,24 +1,16 @@
 # Utility Functions
 try:
-    # When I have python 3 CYTHON modules
-    # try:
-    #     import manhattan_sphere
-    # except ImportError:
-    #     from . import manhattan_sphere
-    import manhattan_sphere
+    from . import manhattan_sphere
     FAST_SPHERE = True
-except:
+except Exception as e:
+    print(e)
     FAST_SPHERE = False
     print('Fast manhattan sphere generation not available. Falling back on default Python implementation.')
 try:
-    # When I have python 3 CYTHON modules
-    # try:
-    #     import LOS
-    # except ImportError:
-    #     from . import LOS
-    import LOS
+    from . import LOS
     FAST_LOS = True
-except:
+except Exception as e:
+    print(e)
     FAST_LOS = False
     print('Fast line of sight calculation not available. Falling back on default Python implementation.')
 # === TAXICAB DISTANCE =================================================
@@ -88,13 +80,16 @@ def intify_comma_list(comma_string):
         s_l = []
     return s_l
 
+# === LESS THAN OR EQUAL ===============================================
+def lte(a, b):
+    return a <= b
 # === GREATER THAN OR EQUAL ============================================
 def gte(a, b):
     return a >= b
-# === LESS THAN =======================================================
+# === LESS THAN ========================================================
 def lt(a, b):
     return a < b
-# === GREATER THAN =======================================================
+# === GREATER THAN =====================================================
 def gt(a, b):
     return a > b
 
@@ -104,6 +99,8 @@ def get_color(team):
         return 'Blue'
     elif team == 'other':
         return 'Green'
+    elif team == 'enemy2':
+        return 'Purple'
     else:
         return 'Red'
 
@@ -149,31 +146,31 @@ def raytrace(old, new):
 
 # === PATH TRAVERSAL ===================================================
 def travel_algorithm(gameStateObj, path, moves, unit, grid):
-        """
-        # Given a long path, travels along that path as far as possible 
-        """
-        if path:
-            moves_left = moves
-            through_path = 0
-            for position in path[::-1][1:]: # Remove start position, travel backwards
-                moves_left -= grid[gameStateObj.grid_manager.gridHeight * position[0] + position[1]].cost
-                """
-                if position in gameStateObj.map.tiles:
-                    moves_left -= gameStateObj.map.tiles[position].get_mcost(unit)
-                else:
-                    break
-                """
-                if moves_left >= 0:
-                    through_path += 1
-                else:
-                    break
-            # Don't move where a unit already is, and don't make through_path < 0
-            # Lower the through path by one, cause we can't move that far...
-            while through_path > 0 and any(other_unit.position == path[-(through_path + 1)] for other_unit in gameStateObj.allunits if unit is not other_unit):
-                through_path -= 1
-            return path[-(through_path + 1)] # We found the quickest path, now attempt to travel along as far as we can
-        else:
-            return unit.position
+    """
+    # Given a long path, travels along that path as far as possible 
+    """
+    if path:
+        moves_left = moves
+        through_path = 0
+        for position in path[::-1][1:]: # Remove start position, travel backwards
+            moves_left -= grid[gameStateObj.grid_manager.gridHeight * position[0] + position[1]].cost
+            """
+            if position in gameStateObj.map.tiles:
+                moves_left -= gameStateObj.map.tiles[position].get_mcost(unit)
+            else:
+                break
+            """
+            if moves_left >= 0:
+                through_path += 1
+            else:
+                break
+        # Don't move where a unit already is, and don't make through_path < 0
+        # Lower the through path by one, cause we can't move that far...
+        while through_path > 0 and any(other_unit.position == path[-(through_path + 1)] for other_unit in gameStateObj.allunits if unit is not other_unit):
+            through_path -= 1
+        return path[-(through_path + 1)] # We found the quickest path, now attempt to travel along as far as we can
+    else:
+        return unit.position
 
 # === Processes weighted lists
 def process_terms(terms):

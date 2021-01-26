@@ -59,7 +59,7 @@ class ActionLog(object):
             self.end = end
 
         def __repr__(self):
-            return '%s %s %s' % (self.unit.name, self.begin, self.end)
+            return 'Move: %s %s %s' % (self.unit.name, self.begin, self.end)
 
     def set_up(self):
         def finalize(move):
@@ -80,11 +80,12 @@ class ActionLog(object):
                     current_move.end = action_index
                     finalize(current_move)
                     current_move = None
-            elif isinstance(action, Action.ArriveOnMap):
-                if current_move:
-                    finalize(current_move)
-                    current_move = None
-                self.unique_moves.append(('Arrive', action_index, action.unit.id))                    
+            # Arriving on the map is just not an action :(
+            # elif isinstance(action, Action.ArriveOnMap):
+            #     if current_move:
+            #         finalize(current_move)
+            #         current_move = None
+            #     self.unique_moves.append(('Arrive', action_index, action.unit.id))                    
             elif isinstance(action, Action.MarkPhase):
                 if current_move:
                     finalize(current_move)
@@ -103,7 +104,7 @@ class ActionLog(object):
             if isinstance(last_move, self.Move):
                 if last_move.end < last_action_index:
                     self.unique_moves.append(('Extra', last_move.end + 1, last_action_index))
-            elif last_move < last_action_index:
+            elif last_move[1] < last_action_index:
                 self.unique_moves.append(('Extra', last_move[1] + 1, last_action_index))
 
         logger.info('*** Turnwheel Begin! ***')
@@ -296,8 +297,11 @@ class ActionLog(object):
     def is_turned_back(self):
         return self.action_index + 1 < len(self.actions)
 
-    def can_use(self):
-        return self.is_turned_back() and not self.locked
+    def can_use(self, gameStateObj):
+        player_units = [unit for unit in gameStateObj.allunits if unit.team == "player" and unit.position and not unit.dead]
+        unused_units = [unit for unit in player_units if not unit.isDone()]
+        # Make sure that there is at least one unit that can still move.
+        return self.is_turned_back() and not self.locked and len(unused_units) >= 1
 
     def get_unit_turn(self, unit, wait_index):
         cur_index = wait_index
@@ -418,6 +422,10 @@ class TurnwheelDisplay(object):
 
 class TurnwheelState(StateMachine.State):
     def begin(self, gameStateObj, metaDataObj):
+        # Kill off any units who are currently dying
+        for unit in gameStateObj.allunits:
+            if unit.isDying:
+                unit.die(gameStateObj, event=False)
         gameStateObj.action_log.record = False
         GC.SOUNDDICT['TurnwheelIn2'].play()
         # Lower volume
@@ -462,19 +470,10 @@ class TurnwheelState(StateMachine.State):
             self.last_direction = 'FORWARD'
         elif 'UP' in directions or 'LEFT' in directions:
             GC.SOUNDDICT['Select 2'].play()
-            old_message = None
-            if self.last_direction == 'FORWARD':
-                gameStateObj.action_log.current_unit = None
-                old_message = gameStateObj.action_log.backward(gameStateObj)
-            new_message = gameStateObj.action_log.backward(gameStateObj)
-            if new_message is None:
-                new_message = old_message
-            if new_message is not None:
-                self.display.change_text(new_message, gameStateObj.turncount)
-            self.last_direction = 'BACKWARD'
+            self.go_backwards(gameStateObj)
 
         if action == 'SELECT':
-            if gameStateObj.action_log.can_use():
+            if gameStateObj.action_log.can_use(gameStateObj):
                 GC.SOUNDDICT['TurnwheelOut'].play()
                 # Play Big Turnwheel WOOSH Animation
                 gameStateObj.action_log.finalize()
@@ -483,13 +482,28 @@ class TurnwheelState(StateMachine.State):
                 self.turnwheel_effect()
                 gameStateObj.background.fade_out()
                 gameStateObj.game_constants['current_turnwheel_uses'] -= 1
-            elif not gameStateObj.action_log.locked:
+            elif self.name != 'force_turnwheel' and not gameStateObj.action_log.locked:
                 self.back_out(gameStateObj)
             else:
                 GC.SOUNDDICT['Error'].play()
 
         elif action == 'BACK':
-            self.back_out(gameStateObj)
+            if self.name != 'force_turnwheel':
+                self.back_out(gameStateObj)
+            else:
+                GC.SOUNDDICT['Error'].play()
+
+    def go_backwards(self, gameStateObj):
+        old_message = None
+        if self.last_direction == 'FORWARD':
+            gameStateObj.action_log.current_unit = None
+            old_message = gameStateObj.action_log.backward(gameStateObj)
+        new_message = gameStateObj.action_log.backward(gameStateObj)
+        if new_message is None:
+            new_message = old_message
+        if new_message is not None:
+            self.display.change_text(new_message, gameStateObj.turncount)
+        self.last_direction = 'BACKWARD'
 
     def back_out(self, gameStateObj):
         GC.SOUNDDICT['Select 4'].play()
@@ -522,8 +536,10 @@ class TurnwheelState(StateMachine.State):
             self.transition_out -= 1
             if self.transition_out <= 0:
                 # Let's leave now 
-                gameStateObj.stateMachine.back()
-                gameStateObj.stateMachine.back()
+                # gameStateObj.stateMachine.back()
+                # gameStateObj.stateMachine.back()
+                gameStateObj.stateMachine.clear()
+                gameStateObj.stateMachine.changeState('free')
                 # Called whenever the turnwheel is used
                 turnwheel_script_name = 'Data/turnwheelScript.txt'
                 if self.end_effect and os.path.exists(turnwheel_script_name):

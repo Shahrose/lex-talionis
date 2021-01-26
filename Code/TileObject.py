@@ -273,18 +273,21 @@ class MapObject(object):
         else:
             # Empty dictionary
             for tile_property in self.tile_info_dict[coord].items():
-                self.remove_tile_property(coord, tile_property)
+                self.remove_tile_property_from_name(coord, tile_property[0])
 
     def add_tile_property(self, coord, tile_property, gameStateObj):
         property_name, property_value = tile_property
         # Handle special cases...
         if property_name == 'Status': # Treasure does not need to be split. It is split by the itemparser function itself.
             # Turn these string of ids into a list of status objects
-            status_list = []
-            for status in property_value.split(','):
-                status_obj = StatusCatalog.statusparser(status, gameStateObj)
-                status_list.append(status_obj)
-            property_value = status_list
+            if isinstance(property_value, str):
+                status_list = []
+                for status in property_value.split(','):
+                    status_obj = StatusCatalog.statusparser(status, gameStateObj)
+                    status_list.append(status_obj)
+                property_value = status_list
+            else: # Is already a list of statuses
+                property_value = property_value
         elif property_name == 'Weapon':
             # For now we're ignoring saving Stationary Weapons, which means they can't have uses...
             property_value = ItemMethods.itemparser(property_value)
@@ -296,8 +299,7 @@ class MapObject(object):
             self.hp[coord] = TileHP(int(property_value))
         self.tile_info_dict[coord][property_name] = property_value
 
-    def remove_tile_property(self, coord, tile_property):
-        property_name, property_value = tile_property
+    def remove_tile_property_from_name(self, coord, property_name):
         del self.tile_info_dict[coord][property_name]
         if property_name == "HP" and coord in self.hp:
             del self.hp[coord]
@@ -340,7 +342,7 @@ class MapObject(object):
             self.layers.append(Layer())
         self.layers[layer].append(new_sprite)
 
-    def layer_terrain(self, layer, fn, coord, grid_manager=None):
+    def layer_terrain(self, layer, coord, fn, grid_manager=None):
         while len(self.terrain_layers) <= layer:
             self.terrain_layers.append(TerrainLayer(self))
         self.terrain_layers[layer].add(fn, coord)
@@ -605,7 +607,7 @@ class Layer(object):
         self.sprites.append(obj)
 
     def __iter__(self):
-        return self.sprites
+        return iter(self.sprites)
 
     def remove(self, image_name, position):
         self.sprites = [s for s in self.sprites if s.image_name != image_name or s.position != position]
@@ -672,7 +674,7 @@ class TerrainLayer(object):
 
     def reset(self, old_terrain_ids):
         self._tiles = {}
-        for position, tile_id in old_terrain_ids:
+        for position, tile_id in old_terrain_ids.items():
             for terrain in GC.TERRAINDATA.getroot().findall('terrain'):
                 if int(terrain.find('id').text) == tile_id:
                     new_tile = TileObject(tile_id, terrain.get('name'), terrain.find('minimap').text, terrain.find('platform').text, position,
@@ -709,6 +711,8 @@ class TileObject(object):
 
         # Stats
         self.position = position
+        # print(self.position)
+        assert not self.position or type(self.position) == tuple
         self.stats = OrderedDict()
         self.stats['DEF'] = int(DEF)
         self.stats['RES'] = self.stats['DEF']
@@ -748,13 +752,6 @@ class TileObject(object):
     def change_hp(self, dhp):
         if self.position in self.map_ref.hp:
             self.map_ref.hp[self.position].change_hp(dhp)
-
-    # To shadow UnitObject
-    def lock_active(self):
-        pass
-
-    def unlock_active(self):
-        pass
 
     currenthp = property(get_hp, set_hp)
 

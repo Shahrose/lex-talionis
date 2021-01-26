@@ -3,7 +3,7 @@ import re
 
 class Parser(object):
     def __init__(self, fn):
-        with open(fn) as fp:
+        with open(fn, mode='r', encoding='utf-8') as fp:
             lines = [line.strip() for line in fp.readlines() if not line.startswith('#')]
         stat_line = lines[0]
         # equations = [l.replace(" ", "") for l in lines[1:]]
@@ -91,12 +91,16 @@ class Parser(object):
     def get_heal(self, unit, item=None, dist=0):
         return self.equations['HEAL'](self.equations, unit, item, dist)
 
+    def get_max_fatigue(self, unit, item=None, dist=0):
+        return self.equations['MAX_FATIGUE'](self.equations, unit, item, dist)
+
     def get_equation(self, lhs, unit, item=None, dist=0):
         return self.equations[lhs](self.equations, unit, item, dist)
 
-    def get_expression(self, expr, unit):
+    def get_expression(self, expr, unit, item=None, dist=0):
         expr = self.tokenize(expr)
         expr = [self.replacement_dict.get(n, n) for n in expr]
         expr = ''.join(expr)
         expr = 'int(%s)' % expr
+        equations = self.equations
         return eval(expr)

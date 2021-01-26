@@ -3,58 +3,24 @@
 - Avast Antivirus or other antiviruses may slow down certain actions that write to disk. Known issue with Avast Antivirus Behaviour Shield and exiting the game.
 - Need to compile cython modules for Linux/Mac
 
--- MISSING ANIMS:
-- Demon Surge (Disintegrate)
-- Evil Eye (Scathe)
-- Shadowshot (Hex)
-- Restore (Restore)
+Other features:
+Change Name command
+Class Change command and status
+Have Summons work with the turnwheel -> entails rewriting how summons work
+ProcComponent to conditional proc skills
+Bonus Exp in Base
+Skill Swap in Base and Prep
+AI talk
 
-v0.9.1
-- Palette Editor
-    - Build Palette Editor
+Guide on installing git, Python, Pygame, Pillow and running the engine for the first time
 
-v0.9.3 -- combat update & activated status update
-- Test Test Test
-- Build Engine v0.9.3
-- Build Level Editor v0.9.3
-- Build Animation Script v0.9.3
-- Recompile Sacred Stones items/statuses/classes
-
-v0.9.4 -- dialogue and command update
-- Dialogue Editor
-- Split dialogue and commands into 2 separate files
-- Really, just totally rewrite how dialogue works
-- Rapidly tapping A on Dialogue sometimes causes it to jitter up and down while leaving (probably just need to rewrite how dialogue is rendered to the screen anyway...)
-- When I fix events, make visit, escape?, seize, switch, search, etc, all work the same way
-- Instead of current system, use system of triggers which trigger events. Then can simply attach events to items and statuses and that becomes very easy
-
-v0.9.5 -- menu update
-- Fix menus
-- Take in Mouse input as well
-
-v0.9.6 -- overworld & submap update
-- Test overworld
-- Check that you can skip over overworld sections without repercussions
-    - Or disallow skipping over overworld...
-- Test submap
-
-Later on:
-- Test stationary weapon event tiles + saving + turnwheel
-- Add Fog of War
-- Test removing a stat from stat list (InfoMenu, UnitMenu, Combat)
-- Jealousy System??
-- New Game + ? (difficulty modes only accessible after beating a difficulty?)
-- Automatic Updater
-- Add AI taking into account nearby allies/enemies?
-
+Auto-convert colors?
+Auto-convert feREPO styled map sprites?
 
 FOR FUTURE UPDATES TO THE ENGINE:
---- AI ---
-- Red highlight appears over position of last enemy fought while using 'other' team AI.
 --- ENGINE ---
-- Game Editor??
-- Android Support (pygame_sdl2)
 - Mac/Linux Support
+
 =============
 --- EXTRA ---
 =============
@@ -62,10 +28,7 @@ FOR FUTURE UPDATES TO THE ENGINE:
 - If you are on impassable terrain, take damage.
 - Add levelup quotes - optional - Because characters don't really matter for this game, probably not
 - Add Awakening-style dialogue backlog...??** On R press
-- Have Music Crossfade? -- Not possible with Pygame (SDL_mixer)! only one streamed music channel at a time :(
-- Add other numbers to Level Up Numbers (6 - 7)
 - Comment many of the functions with purposes
-- Allow fully custom stat definitions (and have it effect the menus)
 --- AWAKENING UI ---
 - Awakening style attack unit, then item, rather than the opposite (option) (Use L to cycle through available weapons) (option)
 - Transparent dude moves with arrow

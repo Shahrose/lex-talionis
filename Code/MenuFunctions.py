@@ -25,6 +25,34 @@ def OutlineFont(FONTNAME, text, surf, innercolor, outercolor, position):
     surf.blit(inner_text, position)
     return position
 
+def build_cd_groove(surf, topleft, width, fill, reverse):
+    if reverse:
+        fgs_mid = GC.IMAGESDICT['StatGrooveFillRed']
+    else:
+        fgs_mid = GC.IMAGESDICT['StatGrooveFillGreen']
+    fgs_mid = Engine.subsurface(fgs_mid, (0, 0, 1, 1))
+    back_groove_surf = GC.IMAGESDICT['StatGrooveBackSmall']
+    bgs_start = Engine.subsurface(back_groove_surf, (0, 0, 1, 3))
+    bgs_mid = Engine.subsurface(back_groove_surf, (1, 0, 1, 3))
+    bgs_end = Engine.subsurface(back_groove_surf, (2, 0, 1, 3))
+
+    # Build back groove
+    start_pos = topleft
+    surf.blit(bgs_start, start_pos)
+    for index in range(width - 2):
+        mid_pos = (topleft[0] + bgs_start.get_width() + bgs_mid.get_width()*index, topleft[1])
+        surf.blit(bgs_mid, mid_pos)
+    end_pos = (topleft[0] + bgs_start.get_width() + bgs_mid.get_width()*(width-2), topleft[1])
+    surf.blit(bgs_end, end_pos)
+
+    # Build fill groove
+    if fill == width:
+        number_of_fgs_needed = int(fill - 2)
+    else:
+        number_of_fgs_needed = int(fill - 1) # Width of groove minus section for start and end of back groove
+    for groove in range(number_of_fgs_needed):
+        surf.blit(fgs_mid, (topleft[0] + bgs_start.get_width() + groove, topleft[1] + 1))
+
 class Logo(object):
     def __init__(self, texture, center):
         self.texture = texture
@@ -33,7 +61,7 @@ class Logo(object):
         self.image = None
         self.height = self.texture.get_height()//8
         self.width = self.texture.get_width()
-    
+
         self.logo_counter = 0
         self.logo_anim = [0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 2, 1]
         self.last_update = 0
@@ -117,7 +145,7 @@ class BriefPopUpDisplay(object):
                 my_surf = Image_Modification.flickerImageTranslucent(self.surf, self.update_num)
                 surf.blit(my_surf, (self.topright[0] - self.width + 8, self.topright[1] + self.update_num//5))
             # Fade out
-            else: 
+            else:
                 if self.update_num < -100:
                     my_surf = Image_Modification.flickerImageTranslucent(self.surf, -self.update_num - 100)
                 else:
@@ -156,7 +184,7 @@ class Lore_Display(object):
 
     def draw(self, surf):
         surf.blit(self.image, self.topleft)
-    
+
 # === MENUS ============================================================ ###
 # Abstract menu class. Must implement personal draw function
 class SimpleMenu(Counters.CursorControl):
@@ -208,7 +236,7 @@ class SimpleMenu(Counters.CursorControl):
             if self.currentSelection > len(self.options) - 1:
                 self.currentSelection = 0
             else:
-                self.cursor_y_offset = -1  
+                self.cursor_y_offset = -1
         else:
             self.currentSelection = min(self.currentSelection + 1, len(self.options) - 1)
 
@@ -218,9 +246,9 @@ class SimpleMenu(Counters.CursorControl):
             if self.currentSelection < 0:
                 self.currentSelection = len(self.options) - 1
             else:
-                self.cursor_y_offset = 1  
+                self.cursor_y_offset = 1
         else:
-            self.currentSelection = max(self.currentSelection - 1, 0)     
+            self.currentSelection = max(self.currentSelection - 1, 0)
 
     def updateOptions(self, options):
         self.options = options
@@ -257,7 +285,7 @@ class ChoiceMenu(SimpleMenu):
             if limit and (len(self.options) > limit or hard_limit):
                 height = (8 + 16*limit)
             else:
-                height = (8 + 16*len(self.options)) 
+                height = (8 + 16*len(self.options))
             # Add small gem
             bg_surf = BaseMenuSurf.CreateBaseMenuSurf((self.menu_width, height), background)
             self.bg_surf = Engine.create_surface((bg_surf.get_width() + 2, bg_surf.get_height() + 4), transparent=True, convert=True)
@@ -310,12 +338,12 @@ class ChoiceMenu(SimpleMenu):
 
     def get_topleft(self, gameStateObj):
         if self.topleft == 'auto':
-            if gameStateObj.cursor.position[0] > GC.TILEX//2 + gameStateObj.cameraOffset.get_x():
+            if gameStateObj.cursor.position[0] > GC.TILEX//2 + gameStateObj.cameraOffset.x:
                 self.topleft = (8, 8)
             else:
                 self.topleft = (GC.WINWIDTH - self.menu_width - 8, 8)
         elif self.topleft == 'child':
-            if gameStateObj.cursor.position[0] > GC.TILEX//2 + gameStateObj.cameraOffset.get_x():
+            if gameStateObj.cursor.position[0] > GC.TILEX//2 + gameStateObj.cameraOffset.x:
                 self.topleft = (8 + gameStateObj.activeMenu.menu_width - 32, gameStateObj.activeMenu.currentSelection*16 + 8)
             else:
                 self.topleft = (GC.WINWIDTH - 32 - 8 - gameStateObj.activeMenu.menu_width, gameStateObj.activeMenu.currentSelection*16 + 8)
@@ -423,7 +451,7 @@ class ChoiceMenu(SimpleMenu):
                         uses_font = GC.FONT[self.color_control[index+self.scroll]]
                         if uses_font == GC.FONT['text_white']:
                             uses_font = GC.FONT['text_blue']
-                    elif self.owner.canWield(option):
+                    elif self.owner.canWield(option) and self.owner.canUse(option):
                         main_font = GC.FONT['text_white']
                         uses_font = GC.FONT['text_blue']
                     main_font.blit(str(option), surf, (left + 20, top))
@@ -433,14 +461,38 @@ class ChoiceMenu(SimpleMenu):
                             uses_string = str(option.uses) + '/' + str(option.uses.total_uses)
                         elif option.c_uses:
                             uses_string = str(option.c_uses) + '/' + str(option.c_uses.total_uses)
+                        elif option.cooldown:
+                            top -= 2
+                            if option.cooldown.charged:
+                                uses_font = GC.FONT['text_light_green']
+                                uses_string = str(option.cooldown.cd_uses) + '/' + str(option.cooldown.total_cd_uses)
+                            else:
+                                uses_font = GC.FONT['text_light_red']
+                                uses_string = str(option.cooldown.cd_turns) + '/' + str(option.cooldown.total_cd_turns)
                     else:
                         uses_string = "--"
                         if option.uses:
                             uses_string = str(option.uses)
                         elif option.c_uses:
                             uses_string = str(option.c_uses)
+                        elif option.cooldown:
+                            top -= 2
+                            if option.cooldown.charged:
+                                uses_font = GC.FONT['text_light_green']
+                                uses_string = str(option.cooldown.cd_uses)
+                            else:
+                                uses_font = GC.FONT['text_light_red']
+                                uses_string = str(option.cooldown.cd_turns)
                     pos = (left + self.menu_width - 4 - uses_font.size(uses_string)[0] - (5 if self.limit and len(self.options) > self.limit else 0), top)
                     uses_font.blit(uses_string, surf, pos)
+                    # Draw cooldown groove
+                    if option.cooldown:
+                        if option.cooldown.charged:
+                            build_cd_groove(surf, (left + self.menu_width - 19 - (5 if self.limit and len(self.options) > self.limit else 0), pos[1] + 14), 16,
+                                            int(round((int(option.cooldown.cd_uses) / int(option.cooldown.total_cd_uses)) * 16)), False)
+                        else:
+                            build_cd_groove(surf, (left + self.menu_width - 19 - (5 if self.limit and len(self.options) > self.limit else 0), pos[1] + 14), 16,
+                                            int(round((int(option.cooldown.cd_turns) / int(option.cooldown.total_cd_turns)) * 16)), True)
                 else:
                     if self.color_control:
                         main_font = GC.FONT[self.color_control[index+self.scroll]]
@@ -475,56 +527,6 @@ class ChoiceMenu(SimpleMenu):
         topleft = (self.topleft[0] - 16 + option_left + self.cursorAnim[self.cursorCounter], self.topleft[1] + 5)
         surf.blit(self.cursor, topleft)
 
-class ItemUseMenu(SimpleMenu):
-    def __init__(self, owner, option, topleft, background='BaseMenuBackground'):
-        SimpleMenu.__init__(self, owner, option, topleft, background)
-        self.legal_indices = [index for index, opt in self.options if opt.usable and opt.booster]
-        self.true_selection = 0
-        self.currentSelection = self.legal_indices[self.true_selection]
-
-    def moveUp(self, first_push=True):
-        if first_push:
-            self.true_selection += 1
-            if self.true_selection > len(self.legal_indices) - 1:
-                self.true_selection = 0
-        else:
-            self.true_selection = min(self.true_selection + 1, len(self.legal_indices) - 1)
-        self.currentSelection = self.legal_indices[self.true_selection]
-
-    def moveDown(self, first_push=True):
-        if first_push:
-            self.true_selection -= 1
-            if self.true_selection < 0:
-                self.true_selection = len(self.legal_indices) - 1
-        else:
-            self.true_selection = max(self.true_selection - 1, 0)
-        self.currentSelection = self.legal_indices[self.true_selection]
-
-    def draw(self, surf):
-        BGSurf = BaseMenuSurf.CreateBaseMenuSurf((self.menu_width, 16*5+8), self.background)
-        # Blit face
-        face_image = self.owner.bigportrait.copy()
-        face_image = Engine.flip_horiz(face_image)
-        BGSurf.blit(face_image, (0, 0))
-
-        self.draw_highlight(BGSurf, self.currentSelection)
-        for index, option in enumerate(self.options):
-            option.draw(BGSurf, (4, 4 + index*16))
-            name_font = GC.FONT['text_grey']
-            uses_font = GC.FONT['text_grey']
-            if option.usable and option.booster:
-                name_font = GC.FONT['text_white']
-                uses_font = GC.FONT['text_blue']
-            name_font.blit(str(option), BGSurf, (20, 8+index*16))
-            uses_string = "--"
-            if option.uses:
-                uses_string = str(option.uses)
-            elif option.c_uses:
-                uses_string = str(option.c_uses)
-            uses_font.blit(uses_string, BGSurf, (self.menu_width - 4 - uses_font.size(uses_string), 8+index*16))
-        surf.blit(BGSurf, self.topleft)
-        self.draw_cursor(surf, self.currentSelection)
-
 class ComplexMenu(SimpleMenu):
     def __init__(self, owner, options, topleft, background='BaseMenuBackground'):
         SimpleMenu.__init__(self, owner, options, topleft, background)
@@ -538,9 +540,9 @@ class ComplexMenu(SimpleMenu):
             if hasattr(option, 'name'):
                 option_width = GC.FONT['text_white'].size(option.name)[0]
             else:
-                option_width = GC.FONT['text_white'].size(option)[0] 
+                option_width = GC.FONT['text_white'].size(option)[0]
             if hasattr(option, 'draw'):
-                option_width += 16 
+                option_width += 16
             if option_width > longest_width_needed:
                 longest_width_needed = option_width
 
@@ -557,7 +559,7 @@ class ComplexMenu(SimpleMenu):
             self.currentSelection = next_selection
         elif self.currentSelection > split_num:
             next_selection = self.currentSelection - 1
-            while not self.isIndexValid(next_selection): 
+            while not self.isIndexValid(next_selection):
                 next_selection -= 1
                 if next_selection < split_num:
                     return
@@ -866,7 +868,7 @@ class SupportMenu(object):
                     unit_image = unit_sprite.create_image('active')
                 if gameStateObj.support.node_dict[unit.id].dead:
                     unit_image = unit_sprite.create_image('gray')
-                topleft = (4 - 24, 10 + (index+1)*16 - unit_image.get_height())
+                topleft = (4 - 24, 16 + 2 + (index+1)*16 - unit_image.get_height())
             units.append((unit_image, topleft))
 
             # Blit name
@@ -921,7 +923,7 @@ class MainMenu(object):
         if background.startswith('ChapterSelect'):
             self.menu_width = 192
             self.menu_height = 30
-        
+
         self.cursorCounter = 0 # Helper counter for cursor animation
         self.cursorAnim = [0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1]
         self.lastUpdate = Engine.get_time()
@@ -937,16 +939,16 @@ class MainMenu(object):
             top = center[1] - (len(self.options)/2.0 - index)*(self.menu_height+1) + (20 if self.background.startswith('ChapterSelect') else 0) # What is this formula?
             left = center[0] - BGSurf.get_width()//2
             surf.blit(BGSurf, (left, top))
-         
+
             position = (center[0] - GC.BASICFONT.size(str(option))[0]//2, top + BGSurf.get_height()//2 - GC.BASICFONT.size(str(option))[1]//2)
             color_transition = Image_Modification.color_transition(GC.COLORDICT['light_blue'], GC.COLORDICT['off_black'])
             OutlineFont(GC.BASICFONT, str(option), surf, GC.COLORDICT['off_white'], color_transition, position)
-  
+
         if show_cursor:
             height = center[1] - 12 - (len(self.options)/2.0 - self.currentSelection)*(self.menu_height+1) + self.cursorAnim[self.cursorCounter]
             if self.background.startswith('ChapterSelect'):
-                height += 22 
-            
+                height += 22
+
             surf.blit(self.cursor1, (center[0] - self.menu_width//2 - self.cursor1.get_width()//2 - 8, height))
             surf.blit(self.cursor2, (center[0] + self.menu_width//2 - self.cursor2.get_width()//2 + 8, height))
 
@@ -1048,14 +1050,14 @@ class ChapterSelectMenu(MainMenu):
             if self.use_transparency:
                 BGSurf = Image_Modification.flickerImageTranslucent(BGSurf, abs(diff)*30)
             surf.blit(BGSurf, (center[0] - BGSurf.get_width()//2, top))
-         
+
         if show_cursor:
             center_y = center[1] - 12 + self.cursorAnim[self.cursorCounter]
             if self.use_rel_y:
                 height = center_y + self.rel_pos_y
             else:
                 height = center_y + self.currentSelection*(self.menu_height+1) - (len(self.options)-1)*self.menu_height//2 - 4
-            
+
             surf.blit(self.cursor1, (center[0] - self.menu_width//2 - self.cursor1.get_width()//2 - 8, height))
             surf.blit(self.cursor2, (center[0] + self.menu_width//2 - self.cursor2.get_width()//2 + 8, height))
 
@@ -1113,7 +1115,7 @@ class HorizOptionsMenu(Counters.CursorControl):
         if prev_words:
             prev_words += self.spacing
         start_left = self.font.size(prev_words)[0] + option_start
-        for slot in range(num_highlights):    
+        for slot in range(num_highlights):
             topleft = (slot*highlight_width + start_left - 2, 20 + 9)
             bg_surf.blit(highlightSurf, topleft)
 
@@ -1122,11 +1124,48 @@ class HorizOptionsMenu(Counters.CursorControl):
 
         # blit menu
         surf.blit(bg_surf, self.topleft)
-  
+
         # blit cursor
         surf.blit(self.cursor, (self.topleft[0] - 16 + start_left + self.cursorAnim[self.cursorCounter], self.topleft[1] + 20))
-        
-# For Pick Unit and Prep Item
+
+class VertOptionsMenu(HorizOptionsMenu):
+    def get_menu_size(self):
+        h_text = self.font.size(self.text)[0]
+        h_options = max([self.font.size(option)[0] for option in self.options])
+        h_size = max(h_text, h_options)
+        width = h_size + 16 - h_size%8
+        height = (24 + 16*len(self.options))
+        return (width, height)
+
+    def draw(self, surf):
+        bg_surf = self.BGSurf.copy()
+        top = self.topleft[1] + 4 + 16
+        left = self.topleft[0]
+
+        # blit first line
+        self.font.blit(self.text, bg_surf, (self.half_width - self.font.size(self.text)[0]//2, 4))
+
+        cursor_y = top + 16 * self.options.index(self.getSelection())
+
+        # blit menu
+        surf.blit(bg_surf, self.topleft)
+
+        # blit highlight
+        highlightSurf = GC.IMAGESDICT['MenuHighlight']
+        highlight_width = highlightSurf.get_width()
+        num_highlights = self.half_width - 16
+        for slot in range(num_highlights):
+            topleft = (slot*highlight_width + left + 16, cursor_y + 9)
+            surf.blit(highlightSurf, topleft)
+
+        # blit options
+        for idx, option in enumerate(self.options):
+            self.font.blit(str(option), surf, (left + 16, top + (16 * idx)))
+
+        # blit cursor
+        surf.blit(self.cursor, (left + self.cursorAnim[self.cursorCounter], cursor_y))
+                
+# For Pick Unit and Prep Item and Arena Choice
 class UnitSelectMenu(Counters.CursorControl):
     def __init__(self, units, units_per_row, num_rows, topleft):
         self.options = units
@@ -1146,7 +1185,7 @@ class UnitSelectMenu(Counters.CursorControl):
             self.menu_size = GC.WINWIDTH - 16, self.option_height*self.num_rows + 8
         else:
             self.menu_size = self.getMenuSize()
-        
+
         self.menu_width = self.menu_size[0]
         self.highlight = True
         self.draw_extra_marker = None
@@ -1160,7 +1199,7 @@ class UnitSelectMenu(Counters.CursorControl):
         shimmer = GC.IMAGESDICT['Shimmer2']
         self.backsurf.blit(shimmer, (self.backsurf.get_width() - shimmer.get_width() - 1, self.backsurf.get_height() - shimmer.get_height() - 5))
         self.backsurf = Image_Modification.flickerImageTranslucent(self.backsurf, 10)
-    
+
     def updateOptions(self, options):
         self.options = options
 
@@ -1219,7 +1258,7 @@ class UnitSelectMenu(Counters.CursorControl):
             highlightSurf = GC.IMAGESDICT['MenuHighlight']
             width = highlightSurf.get_width()
             for slot in range((self.option_length-4)//width): # Gives me the amount of highlight needed
-                left = self.topleft[0] + 20 + x_center + self.currentSelection%self.units_per_row*self.option_length + slot*width 
+                left = self.topleft[0] + 20 + x_center + self.currentSelection%self.units_per_row*self.option_length + slot*width
                 top = self.topleft[1] + (self.currentSelection-self.scroll*self.units_per_row)//self.units_per_row*self.option_height + 12
                 surf.blit(highlightSurf, (left, top))
         if self.draw_extra_marker:
@@ -1245,6 +1284,8 @@ class UnitSelectMenu(Counters.CursorControl):
             unit_image = unit.sprite.create_image('passive')
             if self.mode == 'position' and not unit.position:
                 unit_image = unit.sprite.create_image('gray')
+            elif self.mode == 'arena' and unit.currenthp <= 1:
+                unit_image = unit.sprite.create_image('gray')
             elif unit == self.options[self.currentSelection]:
                 unit_image = unit.sprite.create_image('active')
             topleft = (self.topleft[0] - 4 + x_center + left*self.option_length, self.topleft[1] + 2 + (top+1)*self.option_height - unit_image.get_height() + 8)
@@ -1257,6 +1298,8 @@ class UnitSelectMenu(Counters.CursorControl):
                     font = GC.FONT['text_grey']
                 elif unit.position and 'Formation' not in gameStateObj.map.tile_info_dict[unit.position]:
                     font = GC.FONT['text_green']  # Locked/Lord character
+            elif self.mode == 'arena' and unit.currenthp <= 1:
+                font = GC.FONT['text_grey']
             position = (self.topleft[0] + 20 + 1 + 16 + x_center + left*self.option_length, self.topleft[1] + 2 + top*self.option_height)
             font.blit(unit.name, surf, position)
 
@@ -1276,7 +1319,7 @@ class UnitSelectMenu(Counters.CursorControl):
             highlightSurf = GC.IMAGESDICT['MenuHighlight']
             width = highlightSurf.get_width()
             for slot in range((self.option_length-20)//width): # Gives me the amount of highlight needed
-                left = self.topleft[0] + 20 + selection%self.units_per_row*self.option_length + slot*width 
+                left = self.topleft[0] + 20 + selection%self.units_per_row*self.option_length + slot*width
                 top = self.topleft[1] + (selection-self.scroll)//self.units_per_row*self.option_height + 12
                 surf.blit(highlightSurf, (left, top))
 
@@ -1304,6 +1347,8 @@ def drawUnitItems(surf, topleft, unit, include_top=False, include_bottom=True, i
             img = GC.IMAGESDICT['Shimmer' + str(shimmer)]
             blue_backSurf.blit(img, (blue_backSurf.get_width() - img.get_width() - 1, blue_backSurf.get_height() - img.get_height() - 5))
         blue_backSurf = Image_Modification.flickerImageTranslucent(blue_backSurf, 10)
+        if include_top:
+            topleft = topleft[0], topleft[1] - 4
         surf.blit(blue_backSurf, topleft)
 
         if include_face:
@@ -1320,16 +1365,29 @@ def drawUnitItems(surf, topleft, unit, include_top=False, include_bottom=True, i
             item.draw(surf, (topleft[0] + 2, topleft[1] + index*16 + 4))
             name_font = GC.FONT['text_grey']
             use_font = GC.FONT['text_grey']
-            if unit.canWield(item):
+            if unit.canWield(item) and unit.canUse(item):
                 name_font = GC.FONT['text_white']
                 use_font = GC.FONT['text_blue']
             name_font.blit(item.name, surf, (topleft[0] + 4 + 16, topleft[1] + index*16 + 4))
             uses_string = "--"
+            vert_adj = 0
             if item.uses:
                 uses_string = str(item.uses)
             elif item.c_uses:
                 uses_string = str(item.c_uses)
-            use_font.blit(uses_string, surf, (topleft[0] + 104 - 4 - use_font.size(uses_string)[0], topleft[1] + index*16 + 4))
+            elif item.cooldown:
+                vert_adj = 2
+                if item.cooldown.charged:
+                    uses_string = str(item.cooldown.cd_uses)
+                    use_font = GC.FONT['text_light_green']
+                    build_cd_groove(surf, (topleft[0] + 104 - 19, topleft[1] + (index+1)*16), 16,
+                                    int(round((int(item.cooldown.cd_uses) / int(item.cooldown.total_cd_uses)) * 16)), False)
+                else:
+                    uses_string = (str(item.cooldown.cd_turns))
+                    use_font = GC.FONT['text_light_red']
+                    build_cd_groove(surf, (topleft[0] + 104 - 19, topleft[1] + (index+1)*16), 16,
+                                    int(round((int(item.cooldown.cd_turns) / int(item.cooldown.total_cd_turns)) * 16)), True)
+            use_font.blit(uses_string, surf, (topleft[0] + 104 - 4 - use_font.size(uses_string)[0], topleft[1] + index*16 + 4 - vert_adj))
 
 # Serves as controller class for host of menus
 class ConvoyMenu(object):
@@ -1358,6 +1416,8 @@ class ConvoyMenu(object):
             sorted_dict[w_type] = [option for option in options if w_type == option.TYPE]
         sorted_dict['Consumable'] = [option for option in options if not option.TYPE]
         for key, value in sorted_dict.items():
+            value.sort(key=lambda item: item.cooldown.cd_turns if item.cooldown and not item.cooldown.charged else 100)
+            value.sort(key=lambda item: item.cooldown.cd_uses if item.cooldown and item.cooldown.charged else 100)
             value.sort(key=lambda item: item.c_uses.uses if item.c_uses else 100)
             value.sort(key=lambda item: item.uses.uses if item.uses else 100)
             value.sort(key=lambda item: item.name)
@@ -1498,7 +1558,7 @@ class ShopMenu(ChoiceMenu):
         if self.shimmer:
             img = GC.IMAGESDICT['Shimmer' + str(self.shimmer)]
             BGSurf.blit(img, (BGSurf.get_width() - img.get_width() - 1, BGSurf.get_height() - img.get_height() - 5))
-        BGSurf = Image_Modification.flickerImageTranslucent(BGSurf, 10)    
+        BGSurf = Image_Modification.flickerImageTranslucent(BGSurf, 10)
         # Blit background
         surf.blit(BGSurf, self.topleft)
 
@@ -1516,10 +1576,11 @@ class ShopMenu(ChoiceMenu):
         # Blit options
         for index, option in enumerate(self.options[self.scroll:self.scroll+self.limit]):
             option.draw(surf, (self.topleft[0] + 4, self.topleft[1] + 4 + index*16))
-                
+
             uses_string = '--'
             value_string = '--'
             true_value = None
+            vert_adj = 0
             if option.uses:
                 uses_string = str(option.uses.uses)
                 if self.mode == 'Repair':
@@ -1531,8 +1592,11 @@ class ShopMenu(ChoiceMenu):
                 else:
                     true_value //= 2
                 true_value = int(true_value)
-            elif option.c_uses:
-                uses_string = str(option.c_uses)
+            elif option.c_uses or option.cooldown:
+                if option.c_uses:
+                    uses_string = str(option.c_uses)
+                else:
+                    uses_string = str(option.cooldown.cd_uses)
                 if self.mode in ('Buy', 'Sell'):
                     true_value = option.value
                 else:
@@ -1571,16 +1635,21 @@ class ShopMenu(ChoiceMenu):
                 value_font = GC.FONT['text_blue']
 
             name_font.blit(str(option), surf, (self.topleft[0] + 20, self.topleft[1] + 4 + index*16))
-
-            uses_font.blit(uses_string, surf, (self.topleft[0] + 96, self.topleft[1] + 4 + index*16))
+            if option.cooldown:
+                vert_adj = 1
+                uses_font = GC.FONT['text_light_green']
+                build_cd_groove(surf, (self.topleft[0] + 95, self.topleft[1] + (1 + index) * 16 + 1), 16,
+                                int(round((int(option.cooldown.cd_uses) / int(option.cooldown.total_cd_uses)) * 16)),
+                                False)
+            uses_font.blit(uses_string, surf, (self.topleft[0] + 96, self.topleft[1] + 4 + index*16 - vert_adj))
             left = self.topleft[0] + BGSurf.get_width() - 4 - value_font.size(value_string)[0]
             if self.limit == 7:
                 left -= 4 # to get out of the way of scroll bar
             value_font.blit(value_string, surf, (left, self.topleft[1] + 4 + index*16))
         if not self.options:
             GC.FONT['text_grey'].blit(cf.WORDS['Nothing'], surf, (self.topleft[0] + 20, self.topleft[1] + 4))
-                         
-        if self.takes_input:          
+
+        if self.takes_input:
             self.draw_cursor(surf, self.currentSelection-self.scroll)
 
         if self.limit == 7: # Base Market Convoy menu
@@ -1609,16 +1678,18 @@ class ShopMenu(ChoiceMenu):
 
 # Menu used for trading between units
 class TradeMenu(Counters.CursorControl):
-    def __init__(self, owner, partner, options1, options2):
+    def __init__(self, owner, partner, owner_items, partner_items):
         self.owner = owner
         self.partner = partner
-        self.options1 = options1
-        self.options2 = options2
+        self.owner_items = owner_items
+        self.partner_items = partner_items
 
         self.topleft = (12, 68)
         # Where the cursor hands are at
-        self.selection1 = 0 # Main hand
-        self.selection2 = None # Secondary Hand
+        # First number is which side of the menu (left (0) or right (1))
+        # Second number is which item index
+        self.main_hand = [0, 0] # Main hand
+        self.extra_hand = None # Secondary Hand
 
         Counters.CursorControl.__init__(self)
         self.cursor_y_offset = 0
@@ -1662,32 +1733,31 @@ class TradeMenu(Counters.CursorControl):
         highlightSurf = GC.IMAGESDICT['MenuHighlight']
         width = highlightSurf.get_width()
         for slot in range((self.menuWidth - 16)//width): # Gives me the amount of highlight needed
-            topleft = (self.topleft[0] + 8 + slot*width + (self.menuWidth+8)*(self.selection1//cf.CONSTANTS['max_items']), 
-                       self.topleft[1] + 11 + (self.selection1%cf.CONSTANTS['max_items'])*16)
+            topleft = (self.topleft[0] + 8 + slot*width + (self.menuWidth+8)*self.main_hand[0],
+                       self.topleft[1] + 11 + (self.main_hand[1]*16))
             surf.blit(highlightSurf, topleft)
 
-        self.draw_items(surf, self.options1, self.topleft, BGSurf1.get_width(), self.owner)
-        self.draw_items(surf, self.options2, second_topleft, BGSurf2.get_width(), self.partner)
+        self.draw_items(surf, self.owner_items, self.topleft, BGSurf1.get_width(), self.owner)
+        self.draw_items(surf, self.partner_items, second_topleft, BGSurf2.get_width(), self.partner)
 
-        if self.selection2 is not None:
-            left = self.topleft[0] - 10 + self.cursorAnim[self.cursorCounter] + (self.menuWidth+8)*(self.selection2//cf.CONSTANTS['max_items'])
-            top = self.topleft[1] + 4 + (self.selection2%cf.CONSTANTS['max_items'])*self.optionHeight
+        if self.extra_hand is not None:
+            left = self.topleft[0] - 10 + self.cursorAnim[self.cursorCounter] + (self.menuWidth+8)*self.extra_hand[0]
+            top = self.topleft[1] + 4 + self.extra_hand[1]*self.optionHeight
             surf.blit(self.cursor, (left, top))
 
-        # Cursor location        
-        left = self.topleft[0] - 10 + self.cursorAnim[self.cursorCounter] + (self.menuWidth+8)*(self.selection1//cf.CONSTANTS['max_items'])
-        top = self.topleft[1] + 4 + (self.selection1%cf.CONSTANTS['max_items'])*16 + self.cursor_y_offset*8
+        # Cursor location
+        left = self.topleft[0] - 10 + self.cursorAnim[self.cursorCounter] + (self.menuWidth+8)*self.main_hand[0]
+        top = self.topleft[1] + 4 + self.main_hand[1]*16 + self.cursor_y_offset*8
         self.cursor_y_offset = 0 # reset
         surf.blit(self.cursor, (left, top))
 
-    def draw_items(self, surf, options, topleft, width, owner):
-        # Blit second unit's items
-        for index, option in enumerate(options):
-            option.draw(surf, (topleft[0] + 4, topleft[1] + 4 + index*self.optionHeight))
-            if option.locked:
+    def draw_items(self, surf, items, topleft, width, owner):
+        for index, item in enumerate(items):
+            item.draw(surf, (topleft[0] + 4, topleft[1] + 4 + index*self.optionHeight))
+            if item.locked:
                 font = GC.FONT['text_yellow']
                 uses_font = GC.FONT['text_blue']
-            elif owner.canWield(option):
+            elif owner.canWield(item):
                 font = GC.FONT['text_white']
                 uses_font = GC.FONT['text_blue']
             else:
@@ -1695,42 +1765,78 @@ class TradeMenu(Counters.CursorControl):
                 uses_font = GC.FONT['text_grey']
             height = self.topleft[1] + 5 + index*self.optionHeight
             right = topleft[0] + width - 4
-            font.blit(str(option), surf, (topleft[0] + 20, height))
-            if option.uses:
-                uses_font.blit(str(option.uses), surf, (right - uses_font.size(str(option.uses))[0], height))
-            elif option.c_uses:
-                uses_font.blit(str(option.c_uses), surf, (right - uses_font.size(str(option.c_uses))[0], height))
+            font.blit(str(item), surf, (topleft[0] + 20, height))
+            if item.uses:
+                uses_font.blit(str(item.uses), surf, (right - uses_font.size(str(item.uses))[0], height))
+            elif item.c_uses:
+                uses_font.blit(str(item.c_uses), surf, (right - uses_font.size(str(item.c_uses))[0], height))
+            elif item.cooldown:
+                if item.cooldown.charged:
+                    uses_font = GC.FONT['text_light_green']
+                    uses_font.blit(str(item.cooldown.cd_uses), surf, (right - uses_font.size(str(item.cooldown.cd_uses))[0], height - 3))
+                    build_cd_groove(surf, (right - 15, height + self.optionHeight - 5), 16,
+                                    int(round((int(item.cooldown.cd_uses) / int(item.cooldown.total_cd_uses)) * 16)), False)
+                else:
+                    uses_font = GC.FONT['text_light_red']
+                    uses_font.blit((str(item.cooldown.cd_turns)), surf, (right - uses_font.size((str(item.cooldown.cd_turns)))[0], height - 3))
+                    build_cd_groove(surf, (right - 15, height + self.optionHeight - 5), 16,
+                                    int(round((int(item.cooldown.cd_turns) / int(item.cooldown.total_cd_turns)) * 16)), True)
             else:
                 uses_font.blit('--', surf, (right - uses_font.size('--')[0], height))
 
-    def setSelection(self):
-        self.selection2 = self.selection1
-
-        if self.selection1 < 5:
-            self.selection1 = 5
-        else:
-            self.selection1 = 0
-
     def drawInfo(self, surf):
         if self.info_flag:
-            side_flag = False
-            if self.selection1 < cf.CONSTANTS['max_items'] and self.selection1 < len(self.options1):
-                option = self.options1[self.selection1]
-                idx = self.selection1
-            elif self.selection1 > cf.CONSTANTS['max_items']-1 and self.selection1 - cf.CONSTANTS['max_items'] < len(self.options2):
-                option = self.options2[self.selection1-cf.CONSTANTS['max_items']]
-                idx = self.selection1-cf.CONSTANTS['max_items']
-                side_flag = True
+            # If on an owner item
+            if self.main_hand[0] == 0 and self.main_hand[1] < len(self.owner_items):
+                option = self.owner_items[self.main_hand[1]]
+                idx = self.main_hand[1]
+            elif self.main_hand[0] == 1 and self.main_hand[1] < len(self.partner_items):
+                option = self.partner_items[self.main_hand[1]]
+                idx = self.main_hand[1]
             else:
                 self.info_flag = False
                 return
             if isinstance(option, ItemMethods.ItemObject):
                 help_box = option.get_help_box()
                 top = self.topleft[1] + 4 + 16*idx - help_box.get_height()
-                if side_flag:
+                if self.main_hand[0] == 1:
                     help_box.draw(surf, (GC.WINWIDTH - 8 - help_box.get_width(), top))
                 else:
                     help_box.draw(surf, (self.topleft[0] + 8, top))
+
+    def is_selection_set(self):
+        return self.extra_hand is not None
+
+    def unsetSelection(self):
+        self.extra_hand = None
+
+    def setSelection(self):
+        # This puts the secondary hand in the spot the original hand came from
+        self.extra_hand = [self.main_hand[0], self.main_hand[1]]
+
+        # Trading item FROM the unit on the left
+        if self.main_hand[0] == 0:  # Main hand was on left
+            self.main_hand[0] = 1  # Move hand to right
+            # Move hand to highest empty spot available
+            if len(self.partner_items) < cf.CONSTANTS['max_items']:
+                self.main_hand[1] = self._get_max_selectable2() - 1
+            else:
+                self.main_hand[1] = self.main_hand[1]  # Index doesn't change
+            # if len(self.partner_items) < cf.CONSTANTS['max_items']:
+            #     self.main_hand[1] = len(self.partner_items)
+            # else:  # if not available, top of items
+            #     self.main_hand[1] = 0
+        # Trading item FROM the unit on the right
+        else:
+            self.main_hand[0] = 0
+            if len(self.owner_items) < cf.CONSTANTS['max_items']:
+                self.main_hand[1] = self._get_max_selectable1() - 1
+            else:
+                self.main_hand[1] = self.main_hand[1]
+            # if len(self.owner_items) < cf.CONSTANTS['max_items']:
+            #     self.main_hand[1] = len(self.owner_items)
+            # else:
+            #     self.main_hand[1] = 0
 
     def tradeItems(self, gameStateObj):
         # swaps selected item and current item
@@ -1739,97 +1845,129 @@ class TradeMenu(Counters.CursorControl):
         item2 = "EmptySlot"
         # Item 2 is where the item came from
         # Item 1 is where the item is going
-        if self.selection1 < cf.CONSTANTS['max_items'] and self.selection1 < len(self.options1):
-            item1 = self.options1[self.selection1]
-        elif self.selection1 > cf.CONSTANTS['max_items']-1 and self.selection1 - cf.CONSTANTS['max_items'] < len(self.options2):
-            item1 = self.options2[self.selection1-cf.CONSTANTS['max_items']]
-        if self.selection2 < cf.CONSTANTS['max_items'] and self.selection2 < len(self.options1):
-            item2 = self.options1[self.selection2]
-        elif self.selection2 > cf.CONSTANTS['max_items']-1 and self.selection2 - cf.CONSTANTS['max_items'] < len(self.options2):
-            item2 = self.options2[self.selection2-cf.CONSTANTS['max_items']]
-
-        """
-        if cf.OPTIONS['debug']:
-            print(self.options1, self.options2)
-            print(item1, item2)
-        """
+        if self.main_hand[0] == 0 and self.main_hand[1] < len(self.owner_items):
+            item1 = self.owner_items[self.main_hand[1]]
+        elif self.main_hand[0] == 1 and self.main_hand[1] < len(self.partner_items):
+            item1 = self.partner_items[self.main_hand[1]]
+        if self.extra_hand[0] == 0 and self.extra_hand[1] < len(self.owner_items):
+            item2 = self.owner_items[self.extra_hand[1]]
+        elif self.extra_hand[0] == 1 and self.extra_hand[1] < len(self.partner_items):
+            item2 = self.partner_items[self.extra_hand[1]]
 
         if (item1 is item2) or (item1 is not "EmptySlot" and item1.locked) or (item2 is not "EmptySlot" and item2.locked):
-            self.selection2 = None
+            self.extra_hand = None
             GC.SOUNDDICT['Error'].play()
-            return 
+            return
 
         # Now swap items
-        # Selection 1 is where the item is going
-        # Selection 2 is where the item came from
-        if self.selection2 < cf.CONSTANTS['max_items']:
-            if self.selection1 < cf.CONSTANTS['max_items']:
+        # Main hand is where the item is going
+        # Extra hand is where the item came from
+        if self.extra_hand[0] == 0:
+            if self.main_hand[0] == 0:
                 Action.do(Action.TradeItem(self.owner, self.owner, item2, item1), gameStateObj)
-                Action.do(Action.OwnerHasTraded(self.owner), gameStateObj)
-                # self.swap(self.owner, self.owner, item1, item2)
             else:
-                # self.swap(self.owner, self.partner, item1, item2)
                 Action.do(Action.TradeItem(self.owner, self.partner, item2, item1), gameStateObj)
-                Action.do(Action.OwnerHasTraded(self.owner), gameStateObj)
         else:
-            if self.selection1 < cf.CONSTANTS['max_items']:
-                # self.swap(self.partner, self.owner, item1, item2)
+            if self.main_hand[0] == 0:
                 Action.do(Action.TradeItem(self.partner, self.owner, item2, item1), gameStateObj)
-                Action.do(Action.OwnerHasTraded(self.owner), gameStateObj)
             else:
-                # self.swap(self.partner, self.partner, item1, item2)
                 Action.do(Action.TradeItem(self.partner, self.partner, item2, item1), gameStateObj)
-                Action.do(Action.OwnerHasTraded(self.owner), gameStateObj)
+        Action.do(Action.OwnerHasTraded(self.owner), gameStateObj)
 
-        self.selection2 = None
-        # self.owner.hasTraded = True
-                
-    # def swap(self, unit1, unit2, item1, item2):
-    #     selection1 = self.selection1%5
-    #     selection2 = self.selection2%5
-    #     if item1 is not "EmptySlot":
-    #         unit1.remove_item(item1)
-    #         unit2.insert_item(selection2, item1)
-    #     if item2 is not "EmptySlot":
-    #         unit2.remove_item(item2)
-    #         unit1.insert_item(selection1, item2)
+        # This part puts the main hand at the location you traded to
+        # Otherwise the main hand would stay in its original spot
+        if self.extra_hand[0] == 0:
+            self.main_hand = [self.extra_hand[0], min(self.extra_hand[1], self._get_max_selectable1() - 1)]
+        else:
+            self.main_hand = [self.extra_hand[0], min(self.extra_hand[1], self._get_max_selectable2() - 1)]
+        self.extra_hand = None
 
     def toggle_info(self):
         self.info_flag = not self.info_flag
 
+    def _get_max_selectable1(self):
+        '''Get the maximum number of selectable menu items
+           on the left side of the trading screen. Depends
+           upon number of items in inventory and whether a
+           trade is active.
+        '''
+        # Allows an empty slot to be selectable if user is choosing trade destination
+        empty_slot = int(
+            self.extra_hand is not None and
+            self.extra_hand[0] == 1 and
+            len(self.owner_items) < cf.CONSTANTS['max_items'] and
+            len(self.partner_items) > 0)
+        return max(len(self.owner_items) + empty_slot, 1)
+
+    def _get_max_selectable2(self):
+        '''Get the maximum number of selectable menu items
+           on the right side of the trading screen. Depends
+           upon number of items in inventory and whether a
+           trade is active.
+        '''
+        # Allows an empty slot to be selectable if user is choosing trade destination
+        empty_slot = int(
+            self.extra_hand is not None and
+            self.extra_hand[0] == 0 and
+            len(self.partner_items) < cf.CONSTANTS['max_items'] and
+            len(self.owner_items) > 0)
+        return max(len(self.partner_items) + empty_slot, 1)
+
     def moveDown(self, first_push=True):
-        if self.selection1 < cf.CONSTANTS['max_items']-1 or (self.selection1 > cf.CONSTANTS['max_items']-1 and self.selection1 < cf.CONSTANTS['max_items']*2-1):
-            self.selection1 += 1
-            self.cursor_y_offset = -1
+        if self.main_hand[0] == 0:
+            num_allowed = self._get_max_selectable1()
+        else:
+            num_allowed = self._get_max_selectable2()
+        if first_push:
+            tmp = (self.main_hand[1] + 1) % num_allowed  # wrap past
+        else:
+            tmp = min(self.main_hand[1] + 1, num_allowed - 1)
+        if tmp != self.main_hand[1]:  # If it moved
+            self.cursor_y_offset = 1 if tmp < self.main_hand[1] else -1
+            self.main_hand[1] = tmp
             return True
-        return False
+        else:
+            return False
 
     def moveUp(self, first_push=True):
-        if (self.selection1 > 0 and self.selection1 < cf.CONSTANTS['max_items']) or self.selection1 > cf.CONSTANTS['max_items']:
-            self.selection1 -= 1
-            self.cursor_y_offset = 1
+        if self.main_hand[0] == 0:
+            num_allowed = self._get_max_selectable1()
+        else:
+            num_allowed = self._get_max_selectable2()
+        if first_push:
+            tmp = (self.main_hand[1] - 1) % num_allowed  # wrap past
+        else:
+            tmp = max(self.main_hand[1] - 1, 0)
+        if tmp != self.main_hand[1]:  # If it moved
+            self.cursor_y_offset = 1 if tmp < self.main_hand[1] else -1
+            self.main_hand[1] = tmp
             return True
-        return False
+        else:
+            return False
 
     def moveLeft(self, first_push=True):
-        if self.selection1 > cf.CONSTANTS['max_items']-1:
-            self.selection1 -= 5
+        if self.main_hand[0] == 1:
+            self.main_hand[0] = 0
+            self.main_hand[1] = min(self.main_hand[1], self._get_max_selectable1() - 1)
             return True
         return False
 
     def moveRight(self, first_push=True):
-        if self.selection1 < cf.CONSTANTS['max_items']:
-            self.selection1 += 5
+        if self.main_hand[0] == 0:
+            self.main_hand[0] = 1
+            self.main_hand[1] = min(self.main_hand[1], self._get_max_selectable2() - 1)
             return True
         return False
 
-    def updateOptions(self, options1, options2):
-        self.options1 = options1
-        self.options2 = options2
+    def updateOptions(self, owner_items, partner_items):
+        self.owner_items = owner_items
+        self.partner_items = partner_items
 
-def drawTradePreview(surf, gameStateObj, steal=False):
+def drawTradePreview(surf, gameStateObj, steal=False, display_traveler=False):
     unit = gameStateObj.cursor.getHoveredUnit(gameStateObj)
     position = unit.position
+    if display_traveler and unit.TRV:
+        unit = gameStateObj.get_unit_from_id(unit.TRV)
     items = unit.items
     window = GC.IMAGESDICT['Trade_Window']
     width, height = window.get_width(), window.get_height()
@@ -1847,31 +1985,43 @@ def drawTradePreview(surf, gameStateObj, steal=False):
     BGSurf.blit(bottom_of_window, (0, BGSurf.get_height() - bottom_of_window.get_height()))
     BGSurf = Image_Modification.flickerImageTranslucent(BGSurf, 10)
 
-    if items:
-        for index, item in enumerate(items):
-            # Item image
-            item.draw(BGSurf, (8, top_of_window.get_height() + index * middle_of_window.get_height() - 2))
-            if item.locked or (steal and item is unit.getMainWeapon()):
-                name_font = GC.FONT['text_grey']
-                uses_font = GC.FONT['text_grey']
+    for index, item in enumerate(items):
+        # Item image
+        item.draw(BGSurf, (8, top_of_window.get_height() + index * middle_of_window.get_height() - 2))
+        if item.locked or (steal and item is unit.getMainWeapon()):
+            name_font = GC.FONT['text_grey']
+            uses_font = GC.FONT['text_grey']
+        else:
+            name_font = GC.FONT['text_white']
+            uses_font = GC.FONT['text_blue']
+        # Name of item
+        height = top_of_window.get_height() + index * name_font.height - 2
+        right = BGSurf.get_width() - 4
+        name_font.blit(item.name, BGSurf, (25, height))
+        # Uses for item
+        if item.uses:
+            uses_width = uses_font.size(str(item.uses))[0]
+            uses_font.blit(str(item.uses), BGSurf, (right - uses_width, height))
+        elif item.c_uses:
+            uses_width = uses_font.size(str(item.c_uses))[0]
+            uses_font.blit(str(item.c_uses), BGSurf, (right - uses_width, height))
+        elif item.cooldown:
+            if item.cooldown.charged:
+                uses_font = GC.FONT['text_light_green']
+                uses_width = uses_font.size(str(item.cooldown.cd_uses))[0]
+                uses_font.blit(str(item.cooldown.cd_uses), BGSurf, (right - uses_width, height - 1))
+                build_cd_groove(BGSurf, (right - 15, height + name_font.height - 3), 16,
+                                int(round((int(item.cooldown.cd_uses) / int(item.cooldown.total_cd_uses)) * 16)), False)
             else:
-                name_font = GC.FONT['text_white']
-                uses_font = GC.FONT['text_blue']
-            # Name of item
-            height = top_of_window.get_height() + index * name_font.height - 2
-            right = BGSurf.get_width() - 4
-            name_font.blit(item.name, BGSurf, (25, height))
-            # Uses for item
-            if item.uses:
-                uses_width = uses_font.size(str(item.uses))[0]
-                uses_font.blit(str(item.uses), BGSurf, (right - uses_width, height))
-            elif item.c_uses:
-                uses_width = uses_font.size(str(item.c_uses))[0]
-                uses_font.blit(str(item.c_uses), BGSurf, (right - uses_width, height))
-            else:
-                uses_width = uses_font.size('--')[0]
-                uses_font.blit('--', BGSurf, (right - uses_width, height))
-    else:
+                uses_font = GC.FONT['text_light_red']
+                uses_width = uses_font.size((str(item.cooldown.cd_turns)))[0]
+                uses_font.blit((str(item.cooldown.cd_turns)), BGSurf, (right - uses_width, height - 1))
+                build_cd_groove(BGSurf, (right - 15, height + name_font.height - 3), 16,
+                                int(round((int(item.cooldown.cd_turns) / int(item.cooldown.total_cd_turns)) * 16)), True)
+        else:
+            uses_width = uses_font.size('--')[0]
+            uses_font.blit('--', BGSurf, (right - uses_width, height))
+    if not items:
         GC.FONT['text_grey'].blit(cf.WORDS['Nothing'], BGSurf, (25, top_of_window.get_height() - 2))
 
     # Blit Character's name and passive Sprite
@@ -1901,7 +2051,7 @@ def drawRescuePreview(surf, gameStateObj):
     num_font.blit(aid, window, (width - num_font.size(aid)[0] - 3, 24))
     rescuer_surf = rescuer.sprite.create_image('passive')
     rescuee_surf = rescuee.sprite.create_image('passive')
-    left = 12 - max(0, (rescuer_surf.get_width() - 16)//2) 
+    left = 12 - max(0, (rescuer_surf.get_width() - 16)//2)
     top = 8 - max(0, (rescuer_surf.get_width() - 16)//2)
     window.blit(rescuer_surf, (left, top))
     window.blit(rescuee_surf, (left, top + 48))
@@ -2111,7 +2261,7 @@ class MVPDisplay(RecordsDisplay):
             GC.FONT['text_yellow'].blit(str(index+self.scroll+1), back_surf, (10, y))
             GC.FONT['text_white'].blit(unit, back_surf, (41, y))
             self.draw_record(back_surf, record, y)
-            
+
         surf.blit(back_surf, (8 + offset_x, 32 + offset_y))
 
         if not offset_x and not offset_y:

@@ -30,7 +30,7 @@ def create_class_dict():
                             'id': c_id,
                             'tier': tier,
                             'wexp_gain': wexp_gain,
-                            'promotes_from': klass.find('promotes_from').text if klass.find('promotes_from').text is not None else None,
+                            'promotes_from': klass.find('promotes_from').text if klass.find('promotes_from') is not None else None,
                             'turns_into': klass.find('turns_into').text.split(',') if klass.find('turns_into').text is not None else [],
                             'movement_group': int(klass.find('movement_group').text),
                             'tags': set(klass.find('tags').text.split(',')) if klass.find('tags').text is not None else set(),
@@ -39,7 +39,7 @@ def create_class_dict():
                             'bases': Utility.intify_comma_list(klass.find('bases').text),
                             'promotion': Utility.intify_comma_list(klass.find('promotion').text) if klass.find('promotion') is not None else [0]*10,
                             'max': Utility.intify_comma_list(klass.find('max').text) if klass.find('max') is not None else [60],
-                            'desc': klass.find('desc').text,
+                            'desc': (klass.find('desc').text or '') if klass.find('desc') is not None else '',
                             'exp_multiplier': float(klass.find('exp_multiplier').text) if klass.find('exp_multiplier') is not None else 1.,
                             'exp_when_attacked': float(klass.find('exp_when_attacked').text) if klass.find('exp_when_attacked') is not None else 1.,
                             'max_level': int(klass.find('max_level').text) if klass.find('max_level') is not None else Utility.find_max_level(tier, cf.CONSTANTS['max_level'])}

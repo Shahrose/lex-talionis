@@ -27,7 +27,9 @@ class PromotionChoiceState(StateMachine.State):
                     # Build animation
                     script = anim['script']
                     name = None
-                    if self.unit.name in anim['images']:
+                    if self.unit.id in anim['images']:
+                        name = self.unit.id
+                    elif self.unit.name in anim['images']:
                         name = self.unit.name
                     else:
                         color = 'Blue' if self.unit.team == 'player' else 'Red'
@@ -170,7 +172,11 @@ class PromotionState(StateMachine.State):
 
         if not self.started:
             # Start music
-            Engine.music_thread.fade_in(GC.MUSICDICT[cf.CONSTANTS.get('music_promotion')])
+            self.promotion_music = cf.CONSTANTS.get('music_promotion')
+            if self.promotion_music:
+                next_song = Engine.music_thread.fade_in(GC.MUSICDICT[self.promotion_music])
+                if not next_song:  # Same song as before
+                    self.promotion_music = None
 
             self.unit = gameStateObj.cursor.currentSelectedUnit
             color = Utility.get_color(self.unit.team)
@@ -181,7 +187,9 @@ class PromotionState(StateMachine.State):
                 # Build animation
                 script = self.right_anim['script']
                 name = None
-                if self.unit.name in self.right_anim['images']:
+                if self.unit.id in self.right_anim['images']:
+                    name = self.unit.id
+                elif self.unit.name in self.right_anim['images']:
                     name = self.unit.name
                 else:
                     name = 'Generic' + color
@@ -196,7 +204,9 @@ class PromotionState(StateMachine.State):
                 # Build animation
                 script = self.left_anim['script']
                 name = None
-                if self.unit.name in self.left_anim['images']:
+                if self.unit.id in self.left_anim['images']:
+                    name = self.unit.id
+                elif self.unit.name in self.left_anim['images']:
                     name = self.unit.name
                 else:
                     name = 'Generic' + color
@@ -279,7 +289,9 @@ class PromotionState(StateMachine.State):
         if anim:
             # Build animation
             script = anim['script']
-            if self.unit.name in anim['images']:
+            if self.unit.id in anim['images']:
+                frame_dir = anim['images'][self.unit.id]
+            elif self.unit.name in anim['images']:
                 frame_dir = anim['images'][self.unit.name]
             else:
                 frame_dir = anim['images']['Generic' + Utility.get_color(self.unit.team)]
@@ -332,7 +344,8 @@ class PromotionState(StateMachine.State):
                     gameStateObj.stateMachine.changeState('transition_double_pop')
                     gameStateObj.background.fade_out()
                 self.current_state = 'Done'  # Inert state
-                Engine.music_thread.fade_back()
+                if self.promotion_music:
+                    Engine.music_thread.fade_back()
                 return 'repeat'
 
         if self.current_anim:

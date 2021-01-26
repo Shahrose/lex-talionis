@@ -32,7 +32,7 @@ class WorldMapBackground(object):
         self.cursor = None
 
     def parse_labels(self, fp):
-        with open(fp, 'r') as label_data:
+        with open(fp, mode='r', encoding='utf-8') as label_data:
             for line in label_data:
                 split_line = line.strip().split(';')
                 coord = (int(split_line[1]), int(split_line[2]))
@@ -99,6 +99,14 @@ class WorldMapBackground(object):
         elif cf.OPTIONS['debug']:
             print('Error! ', name, ' not in self.wm_sprites')
 
+    def focus_sprite(self, name):
+        if name in self.wm_sprites:
+            self.wm_sprites[name].hovered = True
+
+    def unfocus_sprite(self, name):
+        if name in self.wm_sprites:
+            self.wm_sprites[name].hovered = False
+
     def quick_pan(self, new_pos):
         self.x += new_pos[0]
         self.y += new_pos[1]
@@ -121,7 +129,7 @@ class WorldMapBackground(object):
         return x, y
 
     def create_cursor(self, coord):
-        from Cursor import Cursor
+        from .Cursor import Cursor
         self.cursor = Cursor('Cursor', coord, fake=True)
 
     def remove_cursor(self):
@@ -159,7 +167,7 @@ class WorldMapBackground(object):
         for key, wm_unit in self.wm_sprites.items():
             wm_unit.update()
         # World map sprites
-        sorted_sprites = sorted(self.wm_sprites.values(), key=lambda unit: unit.position[1])
+        sorted_sprites = sorted(list(self.wm_sprites.values()), key=lambda unit: unit.position[1])
         for wm_unit in sorted_sprites:
             wm_unit.draw(image)
         self.wm_sprites = {name: unit for name, unit in self.wm_sprites.items() if not unit.remove_flag}

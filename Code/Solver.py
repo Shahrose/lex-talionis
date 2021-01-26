@@ -49,7 +49,7 @@ class SolverStateMachine(object):
         self.state_name = state
         self.state = self.states[state]() if state else None
 
-    def ratchet(self, solver, gameStateObj, metaDataObj):      
+    def ratchet(self, solver, gameStateObj, metaDataObj):   
         next_state = self.state.get_next_state(solver, gameStateObj)
         if next_state != self.state_name:
             self.change_state(next_state)
@@ -89,15 +89,17 @@ class InitState(object):
     def process(self, solver, gameStateObj, metaDataObj):
         solver.remove_pre_proc(gameStateObj)
         solver.reset()
-        solver.atk_pre_proc = self.get_attacker_pre_proc(solver.attacker, gameStateObj)
-        if solver.defender:
-            solver.def_pre_proc = self.get_defender_pre_proc(solver.defender, gameStateObj)
+        solver.atk_pre_proc = self.get_attacker_pre_proc(solver, solver.attacker, gameStateObj)
+        if solver.defender and isinstance(solver.defender, UnitObject.UnitObject):
+            solver.def_pre_proc = self.get_defender_pre_proc(solver, solver.defender, gameStateObj)
         return None
 
-    def get_attacker_pre_proc(self, unit, gameStateObj):
+    def get_attacker_pre_proc(self, solver, unit, gameStateObj):
         proc_statuses = [s for s in unit.status_effects if s.attack_pre_proc]
-        proc_statuses = sorted(proc_statuses, lambda x: x.attack_pre_proc.priority, reverse=True)
+        proc_statuses = sorted(proc_statuses, key=lambda x: x.attack_pre_proc.priority, reverse=True)
         for status in proc_statuses:
+            if solver.has_nihil(solver.defender, status):
+                continue
             roll = static_random.get_combat()
             expr = GC.EQUATIONS.get_expression(status.attack_pre_proc.rate, unit)
             if roll < expr:
@@ -106,10 +108,12 @@ class InitState(object):
                 return status_obj
         return None
 
-    def get_defender_pre_proc(self, unit, gameStateObj):
+    def get_defender_pre_proc(self, solver, unit, gameStateObj):
         proc_statuses = [s for s in unit.status_effects if s.defense_pre_proc]
-        proc_statuses = sorted(proc_statuses, lambda x: x.defense_pre_proc.priority, reverse=True)
+        proc_statuses = sorted(proc_statuses, key=lambda x: x.defense_pre_proc.priority, reverse=True)
         for status in proc_statuses:
+            if solver.has_nihil(solver.attacker, status):
+                continue
             roll = static_random.get_combat()
             expr = GC.EQUATIONS.get_expression(status.defense_pre_proc.rate, unit)
             if roll < expr:
@@ -122,11 +126,14 @@ class AttackerState(SolverState):
     def is_brave(self, item):
         return item.brave or item.brave_attack
 
+    def check_nihil(self, solver, status):
+        return solver.has_nihil(solver.defender, status)
+
     def check_for_brave(self, solver, unit, item):
         if self.is_brave(item):
             return True
         for status in unit.status_effects:
-            if status.adept_proc:
+            if status.adept_proc and not self.check_nihil(solver, status):
                 roll = static_random.get_combat()
                 expr = GC.EQUATIONS.get_expression(status.adept_proc.rate, unit)
                 if roll < expr:
@@ -135,6 +142,8 @@ class AttackerState(SolverState):
         return False
 
     def get_next_state(self, solver, gameStateObj):
+        if solver.event_combat and solver.event_combat[-1] == 'quit':
+            return 'Done'
         if solver.attacker.currenthp > 0:
             if solver.splash and any(s.currenthp > 0 for s in solver.splash):
                 return 'Splash'
@@ -144,8 +153,8 @@ class AttackerState(SolverState):
                 elif solver.allow_counterattack(gameStateObj):
                     return 'Defender'
                 elif solver.atk_rounds < 2 and solver.item.weapon and \
-                        solver.attacker.outspeed(solver.defender, solver.item, gameStateObj) and \
-                        solver.item_uses(solver.item):
+                        solver.attacker.outspeed(solver.defender, solver.item, gameStateObj, "Attack") and \
+                        solver.item_uses(solver.item) and not solver.item.no_double:
                     return 'Attacker'
                 elif solver.next_round(gameStateObj):
                     return 'Init'
@@ -169,6 +178,8 @@ class AttackerState(SolverState):
 
 class AttackerBraveState(AttackerState):
     def get_next_state(self, solver, gameStateObj):
+        if solver.event_combat and solver.event_combat[-1] == 'quit':
+            return 'Done'
         if solver.attacker.currenthp > 0:
             if solver.splash and any(s.currenthp > 0 for s in solver.splash):
                 return 'SplashBrave'
@@ -176,8 +187,8 @@ class AttackerBraveState(AttackerState):
                 if solver.allow_counterattack(gameStateObj):
                     return 'Defender'
                 elif solver.atk_rounds < 2 and solver.item.weapon and \
-                        solver.attacker.outspeed(solver.defender, solver.item, gameStateObj) and \
-                        solver.item_uses(solver.item):
+                        solver.attacker.outspeed(solver.defender, solver.item, gameStateObj, "Attack") and \
+                        solver.item_uses(solver.item) and not solver.item.no_double:
                     return 'Attacker'
                 elif solver.next_round(gameStateObj):
                     return 'Init'
@@ -192,14 +203,19 @@ class DefenderState(AttackerState):
     def is_brave(self, item):
         return item.brave or item.brave_defense
 
+    def check_nihil(self, solver, status):
+        return solver.has_nihil(solver.attacker, status)
+
     def get_next_state(self, solver, gameStateObj):
+        if solver.event_combat and solver.event_combat[-1] == 'quit':
+            return 'Done'
         if solver.attacker.currenthp > 0 and solver.defender.currenthp > 0:
-            ditem = solver.defender.getMainWeapon()
+            ditem = solver.p2_item
             if solver.item_uses(ditem) and self.check_for_brave(solver, solver.defender, ditem):
                 return 'DefenderBrave'
             elif solver.def_rounds < 2 and solver.defender_has_vantage(gameStateObj):
                 return 'Attacker'
-            elif solver.atk_rounds < 2 and solver.attacker.outspeed(solver.defender, solver.item, gameStateObj) and \
+            elif solver.atk_rounds < 2 and solver.attacker.outspeed(solver.defender, solver.item, gameStateObj, "Attack") and \
                     solver.item_uses(solver.item) and not solver.item.no_double:
                 return 'Attacker'
             elif solver.def_double(gameStateObj) and solver.defender_can_counterattack() and \
@@ -213,7 +229,7 @@ class DefenderState(AttackerState):
         solver.def_rounds += 1
 
     def process(self, solver, gameStateObj, metaDataObj):
-        ditem = solver.defender.getMainWeapon()
+        ditem = solver.p2_item
         Action.do(Action.UseItem(ditem), gameStateObj)
         result = solver.generate_phase(gameStateObj, metaDataObj, solver.defender, solver.attacker, ditem, 'Defense')
         result.adept_proc = solver.adept_proc
@@ -225,11 +241,13 @@ class DefenderState(AttackerState):
 
 class DefenderBraveState(DefenderState):
     def get_next_state(self, solver, gameStateObj):
+        if solver.event_combat and solver.event_combat[-1] == 'quit':
+            return 'Done'
         if solver.attacker.currenthp > 0 and solver.defender.currenthp > 0:
-            ditem = solver.defender.getMainWeapon()
+            ditem = solver.p2_item
             if solver.def_rounds < 2 and solver.defender_has_vantage(gameStateObj):
                 return 'Attacker'
-            elif solver.atk_rounds < 2 and solver.attacker.outspeed(solver.defender, solver.item, gameStateObj) and \
+            elif solver.atk_rounds < 2 and solver.attacker.outspeed(solver.defender, solver.item, gameStateObj, "Attack") and \
                     solver.item_uses(solver.item) and not solver.item.no_double:
                 return 'Attacker'
             elif solver.def_double(gameStateObj) and solver.defender_can_counterattack() and \
@@ -258,8 +276,8 @@ class SplashState(AttackerState):
             if solver.allow_counterattack(gameStateObj):
                 return 'Defender'
             elif solver.defender and solver.atk_rounds < 2 and \
-                    solver.attacker.outspeed(solver.defender, solver.item, gameStateObj) and \
-                    solver.item_uses(solver.item) and solver.defender.currenthp > 0:
+                    solver.attacker.outspeed(solver.defender, solver.item, gameStateObj, "Attack") and \
+                    solver.item_uses(solver.item) and solver.defender.currenthp > 0 and not solver.item.no_double:
                 return 'Attacker'
             elif solver.next_round(gameStateObj):
                 return 'Init'
@@ -288,8 +306,8 @@ class SplashBraveState(SplashState):
             elif solver.allow_counterattack(gameStateObj):
                 return 'Defender'
             elif solver.defender and solver.atk_rounds < 2 and \
-                    solver.attacker.outspeed(solver.defender, solver.item. gameStateObj) and \
-                    solver.item_uses(solver.item) and solver.defender.currenthp > 0:
+                    solver.attacker.outspeed(solver.defender, solver.item. gameStateObj, "Attack") and \
+                    solver.item_uses(solver.item) and solver.defender.currenthp > 0 and not solver.item.no_double:
                 return 'Attacker'
             elif solver.next_round(gameStateObj):
                 return 'Init'
@@ -321,14 +339,15 @@ class Solver(object):
         # Have splash damage spiral out from position it started on...
         self.splash = sorted(splash, key=lambda s_unit: Utility.calculate_distance(self.def_pos, s_unit.position))
         self.item = item
+        self.p2_item = self.defender.getMainWeapon() if self.defender else None
         self.skill_used = skill_used
         if event_combat:
             # Must make a copy because we'll be modifying this list
-            self.event_combat = [e for e in event_combat]
+            self.event_combat = [e.lower() for e in event_combat]
         else:
             self.event_combat = None
         # If the item being used has the event combat property, then that too.
-        if not event_combat and (self.item.event_combat or (self.defender and self.defender.getMainWeapon() and self.defender.getMainWeapon().event_combat)):
+        if not event_combat and (self.item.event_combat or (self.defender and self.p2_item and self.p2_item.event_combat)):
             self.event_combat = ['hit'] * 8  # Default event combat for evented items
         self.arena = arena
 
@@ -402,8 +421,10 @@ class Solver(object):
             "Only Units and Tiles can engage in combat! %s" % (defender)
         
         # Add proc skills
-        result.attacker_proc_used = self.get_attacker_proc(attacker, gameStateObj)
-        result.defender_proc_used = self.get_defender_proc(defender, gameStateObj)
+        result.attacker_proc_used = self.get_attacker_proc(attacker, defender, gameStateObj)
+        # Tiles cannot have proc effects
+        if isinstance(defender, UnitObject.UnitObject):
+            result.defender_proc_used = self.get_defender_proc(defender, attacker, gameStateObj)
 
         to_hit = attacker.compute_hit(defender, gameStateObj, item, mode=mode)
         rng_mode = gameStateObj.mode['rng']
@@ -412,12 +433,16 @@ class Solver(object):
         hybrid = to_hit if rng_mode == 'hybrid' else None
 
         # if cf.OPTIONS['debug']: print('To Hit:', to_hit, ' Roll:', roll)
-        if item.weapon:
+        if item.weapon and attacker is not defender:
             if roll < to_hit and (defender not in self.splash or 'evasion' not in defender.status_bundle):
                 result.outcome = (2 if item.guaranteed_crit else 1)
                 result.def_damage = attacker.compute_damage(defender, gameStateObj, item, mode=mode, hybrid=hybrid)
                 if cf.CONSTANTS['crit']: 
                     self.handle_crit(result, attacker, defender, item, mode, gameStateObj, hybrid, event_command)
+                if item.movement:
+                    result.def_movement = item.movement
+                if item.self_movement:
+                    result.atk_movement = item.self_movement
                     
             # Missed but does half damage
             elif item.half_on_miss:
@@ -433,8 +458,17 @@ class Solver(object):
                         self.handle_crit(result, attacker, defender, item, mode, gameStateObj, hybrid, event_command)
                 elif item.heal is not None:
                     result.def_damage = -attacker.compute_heal(defender, gameStateObj, item, mode=mode)
+                    # Live to serve section
+                    if attacker is not defender:
+                        for status in attacker.status_effects:
+                            if status.live_to_serve:
+                                fraction = float(status.live_to_serve)
+                                actual_healing_done = min(-result.def_damage, defender.stats['HP'] - defender.currenthp)
+                                result.atk_damage -= int(fraction * actual_healing_done)
                 if item.movement:
                     result.def_movement = item.movement
+                if item.self_movement:
+                    result.atk_movement = item.self_movement
 
             elif item.half_on_miss and item.hit is not None and item.damage is not None:
                 result.def_damage = self.attacker.compute_damage(defender, gameStateObj, item, mode=mode, hybrid=hybrid) // 2
@@ -451,9 +485,14 @@ class Solver(object):
 
         if result.outcome:
             # Handle status
-            for s_id in item.status:
-                status_object = StatusCatalog.statusparser(s_id, gameStateObj)
-                result.def_status.append(status_object)
+            if isinstance(defender, UnitObject.UnitObject):
+                for s_id in item.status:
+                    status_object = StatusCatalog.statusparser(s_id, gameStateObj)
+                    result.def_status.append(status_object)
+                # Handle fatigue
+                if cf.CONSTANTS['fatigue'] and item.target_fatigue:
+                    Action.do(Action.ChangeFatigue(defender, int(item.target_fatigue)), gameStateObj)
+
             # Handle summon
             if item.summon:
                 result.summoning = SaveLoad.create_summon(item.summon, attacker, self.def_pos, gameStateObj)
@@ -467,7 +506,7 @@ class Solver(object):
             if item.lifelink:
                 result.atk_damage -= min(result.def_damage, defender.currenthp)
             if item.half_lifelink:
-                result.atk_damage -= min(result.def_damage//2, defender.currenthp)
+                result.atk_damage -= min(result.def_damage, defender.currenthp)//2
             # Handle Vampire and deflect_damage Status
             for status in attacker.status_effects:
                 if status.vampire and defender.currenthp - result.def_damage <= 0 and \
@@ -494,27 +533,38 @@ class Solver(object):
         return result
 
     def item_uses(self, item):
-        if (item.uses and item.uses.uses <= 0) or (item.c_uses and item.c_uses.uses <= 0):
+        if (item.uses and item.uses.uses <= 0) or \
+           (item.c_uses and item.c_uses.uses <= 0) or \
+           (item.cooldown and not item.cooldown.charged):
             return False
         return True
 
     def defender_can_counterattack(self):
-        weapon = self.defender.getMainWeapon()
+        weapon = self.p2_item
         if self.arena and weapon:
             return True
-        elif weapon and self.item_uses(weapon) and Utility.calculate_distance(self.attacker.position, self.defender.position) in weapon.get_range(self.defender):
+        elif weapon and self.item_uses(weapon) and \
+            (Utility.calculate_distance(self.attacker.position, self.defender.position) in weapon.get_range(self.defender) or 
+             'distant_counter' in self.defender.status_bundle):
             return True
         else:
             return False
 
     def defender_has_vantage(self, gameStateObj):
-        return isinstance(self.defender, UnitObject.UnitObject) and self.defender.outspeed(self.attacker, self.defender.getMainWeapon(), gameStateObj) and \
+        return isinstance(self.defender, UnitObject.UnitObject) and self.defender.outspeed(self.attacker, self.p2_item, gameStateObj, "Defense") and \
             'vantage' in self.defender.status_bundle and not self.item.cannot_be_countered and \
             self.defender_can_counterattack() and self.item.weapon
 
+    def has_nihil(self, unit, status) -> bool:
+        if isinstance(unit, UnitObject.UnitObject):
+            for skill in unit.status_effects:
+                if skill.nihil and ('All' in skill.nihil or status.id in skill.nihil):
+                    return True
+            return False
+
     def def_double(self, gameStateObj):
         return (cf.CONSTANTS['def_double'] or 'vantage' in self.defender.status_bundle or 'def_double' in self.defender.status_bundle) and \
-            self.def_rounds < 2 and self.defender.outspeed(self.attacker, self.defender.getMainWeapon(), gameStateObj)
+            self.def_rounds < 2 and self.defender.outspeed(self.attacker, self.p2_item, gameStateObj, "Defense") and not (self.p2_item and self.p2_item.no_double)
 
     def allow_counterattack(self, gameStateObj):
         return isinstance(self.defender, UnitObject.UnitObject) and \
@@ -538,7 +588,7 @@ class Solver(object):
                     break
             else:
                 for status in self.defender.status_effects:
-                    if status.charge and self.check_charge(self.defender, self.attacker, self.defender.getMainWeapon(), status, gameStateObj):
+                    if status.charge and self.check_charge(self.defender, self.attacker, self.p2_item, status, gameStateObj):
                         self.total_rounds += 1
                         self.def_charge_proc = status
                         break
@@ -547,27 +597,33 @@ class Solver(object):
             return result
         return False
 
-    def get_attacker_proc(self, unit, gameStateObj):
-        proc_statuses = [s for s in unit.status_effects if s.attack_proc]
-        proc_statuses = sorted(proc_statuses, lambda x: x.attack_proc.priority, reverse=True)
+    def get_attacker_proc(self, attacker, defender, gameStateObj):
+        if not isinstance(defender, UnitObject.UnitObject):
+            return None
+        proc_statuses = [s for s in attacker.status_effects if s.attack_proc]
+        proc_statuses = sorted(proc_statuses, key=lambda x: x.attack_proc.priority, reverse=True)
         for status in proc_statuses:
+            if self.has_nihil(defender, status):
+                continue
             roll = static_random.get_combat()
-            expr = GC.EQUATIONS.get_expression(status.attack_proc.rate, unit)
+            expr = GC.EQUATIONS.get_expression(status.attack_proc.rate, attacker)
             if roll < expr:
                 status_obj = StatusCatalog.statusparser(status.attack_proc.status_id, gameStateObj)
-                Action.do(Action.AddStatus(unit, status_obj), gameStateObj)
+                Action.do(Action.AddStatus(attacker, status_obj), gameStateObj)
                 return status_obj
         return None
 
-    def get_defender_proc(self, unit, gameStateObj):
-        proc_statuses = [s for s in unit.status_effects if s.defense_proc]
-        proc_statuses = sorted(proc_statuses, lambda x: x.defense_proc.priority, reverse=True)
+    def get_defender_proc(self, defender, attacker, gameStateObj):
+        proc_statuses = [s for s in defender.status_effects if s.defense_proc]
+        proc_statuses = sorted(proc_statuses, key=lambda x: x.defense_proc.priority, reverse=True)
         for status in proc_statuses:
+            if self.has_nihil(attacker, status):
+                continue
             roll = static_random.get_combat()
-            expr = GC.EQUATIONS.get_expression(status.defense_proc.rate, unit)
+            expr = GC.EQUATIONS.get_expression(status.defense_proc.rate, defender)
             if roll < expr:
                 status_obj = StatusCatalog.statusparser(status.defense_proc.status_id, gameStateObj)
-                Action.do(Action.AddStatus(unit, status_obj), gameStateObj)
+                Action.do(Action.AddStatus(defender, status_obj), gameStateObj)
                 return status_obj
         return None
 

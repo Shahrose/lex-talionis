@@ -241,7 +241,7 @@
         
         <MT>5</MT>
         <HIT>80</HIT>
-        <LVL>A</LVL>
+        <LVL>B</LVL>
     </item>
 
     <item name="Master Edge">
@@ -262,6 +262,27 @@
         <MT>7</MT>
         <HIT>80</HIT>
         <LVL>B</LVL>
+    </item>
+
+    <item name="Fire Breath">
+        <id>Fire Breath</id>
+        <spritetype>Bow</spritetype>
+        <spriteid>0</spriteid>
+        <components>weapon,weight,crit,effective,wexp,transform</components>
+        <weapontype>Bow</weapontype>
+
+        <RNG>1</RNG>
+        <value>0</value>
+        <weight>0</weight>
+        <desc>hot</desc>
+
+        <effective>Monster;32</effective>
+
+        <MT>16</MT>
+        <HIT>100</HIT>
+        <LVL>D</LVL>
+        <crit>15</crit>
+        <wexp>0</wexp>
     </item>
 
     <!-- Lances -->
@@ -976,7 +997,7 @@
         <value>80</value>
         <desc>Ally gains +50 accuracy until next turn.</desc>
         <status>Fortune</status>
-        <custom_ai>not target.isDone() and target.accuracy(gameStateObj) &lt; 100</custom_ai> 
+        <custom_ai>not target.isDone() and target.accuracy(gameStateObj) is not None and target.accuracy(gameStateObj) &lt; 100</custom_ai> 
         
         <LVL>D</LVL>
         <targets>Ally</targets>    
@@ -1043,6 +1064,26 @@
         <map_hit_color>-248,248,248</map_hit_color>
     </item>
 
+    <item name="Reswap">
+        <id>Reswap</id>
+        <spritetype>Light</spritetype>
+        <spriteid>10</spriteid>       
+        <components>spell,uses,movement,self_movement,beneficial,no_ai,map_hit_color</components>
+        <weapontype>Light</weapontype>
+ 
+        <uses>3</uses>
+        <RNG>2-10</RNG>
+        <value>600</value>
+        <desc>Swaps user.</desc>
+        
+        <LVL>B</LVL>
+        <targets>Unit</targets>
+        <movement>Swap,0</movement>
+        <self_movement>Swap,0</self_movement>
+
+        <map_hit_color>-248,248,248</map_hit_color>
+    </item>
+
     <item name="Unlock">
         <id>Unlock</id>
         <spritetype>Light</spritetype>
@@ -1097,6 +1138,28 @@
         <targets>Ally</targets>
 
         <map_hit_color>248,248,0</map_hit_color>    
+    </item>
+
+    <item name="Purge">
+        <id>Purge</id>
+        <spritetype>Light</spritetype>
+        <spriteid>3</spriteid>       
+        <components>weapon,uses,weight,map_hit_color,crit,wexp,cannot_be_countered</components>
+        <weapontype>Light</weapontype>
+ 
+        <uses>5</uses>
+        <RNG>3-10</RNG>
+        <value>600</value>
+        <weight>20</weight>
+        <desc></desc>
+
+        <MT>10</MT>
+        <HIT>75</HIT>
+        <LVL>B</LVL>
+        <crit>5</crit>
+        <wexp>3</wexp>
+
+        <map_hit_color>248,248,128</map_hit_color>
     </item>
 
     <item name="Physic">
@@ -1280,14 +1343,13 @@
         <id>Fly</id>
         <spritetype>Anima</spritetype>
         <spriteid>7</spriteid>       
-        <components>spell,uses,status,beneficial,custom_ai</components>
+        <components>spell,uses,status,beneficial,no_ai</components>
         <weapontype>Anima</weapontype>
  
         <uses>10</uses>
         <RNG>0-1</RNG>
         <value>200</value>
         <desc>Grants ally flying for 5 turns.</desc>
-        <custom_ai>not 'Rex_Aegis' in [s.id for s in target.status_effects]</custom_ai> 
         
         <LVL>C</LVL>
         <targets>Ally</targets>
@@ -1313,6 +1375,27 @@
         <targets>Tile</targets>
 
         <map_hit_color>224,96,-200</map_hit_color>
+    </item>
+
+    <item name="Lightning">
+        <id>Lightning_Bolt</id>
+        <spritetype>Anima</spritetype>
+        <spriteid>8</spriteid>       
+        <components>spell,uses,aoe,hit,damage,detrimental,ai_speed_up,map_hit_color</components>
+        <weapontype>Anima</weapontype>
+ 
+        <uses>5</uses>
+        <RNG>5</RNG>
+        <value>600</value>
+        <desc>Shoots a line of lightning.</desc>
+        <aoe>Line,0</aoe>
+        
+        <damage>11</damage>
+        <hit>85</hit>
+        <LVL>B</LVL>
+        <targets>Tile</targets>
+
+        <map_hit_color>224,224,-200</map_hit_color>
     </item>
 
     <item name="Meteor">
@@ -1517,6 +1600,23 @@
         <map_hit_color>128,-248,248</map_hit_color>
     </item>
 
+    <item name="Geas">
+        <id>Geas</id>
+        <spritetype>Dark</spritetype>
+        <spriteid>8</spriteid>       
+        <components>spell,uses,detrimental,status</components>
+        <weapontype>Dark</weapontype>
+ 
+        <uses>3</uses>
+        <RNG>1-7</RNG>
+        <value>1000</value>
+        <desc>Mind controls enemy.</desc>
+        <status>Geas_Status</status>
+        
+        <LVL>A</LVL>
+        <targets>Enemy</targets>
+    </item>
+
     <item name="Searing Blades">
         <id>Searing Blades</id>
         <spritetype>Anima</spritetype>
@@ -1642,13 +1742,38 @@
         <spriteid>8</spriteid>
         <components>usable,status,c_uses,map_hit_color</components>
 
-        <c_uses>1</c_uses>
+        <c_uses>2</c_uses>
         <RNG>0</RNG>
         <value>300</value>
         <desc>A draught that recharges all skills.</desc>
         <status>Skill_Restore</status>
 
         <map_hit_color>96,144,232</map_hit_color>
+    </item>
+
+    <item name="Exp Drink">
+        <id>Exp Drink</id>
+        <spritetype>Consumable</spritetype>
+        <spriteid>8</spriteid>
+        <components>usable,uses,map_hit_color,call_item_script,booster</components>
+
+        <uses>2</uses>
+        <RNG>0</RNG>
+        <value>300</value>
+        <desc>A draught that gives 50 exp.</desc>
+
+        <map_hit_color>96,144,232</map_hit_color>
+    </item>
+
+    <item name="Dismount">
+        <id>so_Dismount</id>
+        <spritetype>Consumable</spritetype>
+        <spriteid>8</spriteid>
+        <components>call_item_script</components>
+
+        <RNG>0</RNG>
+        <value>0</value>
+        <desc>A draught that gives 50 exp.</desc>
     </item>
 
     <item name="Skeleton Key">
@@ -1776,6 +1901,21 @@
         <desc>Permanently increases its user's resistance by 2.</desc>   
     </item>
 
+    <item name="Goddess Icon">
+        <id>Goddess Icon</id>
+        <spritetype>Boosters</spritetype>
+        <spriteid>4</spriteid>       
+        <components>usable,uses,permanent_stat_increase,booster,beneficial</components>
+        
+        <!-- HP, STR, MAG, SKL, SPD, LCK, DEF, RES, CON, MOV -->
+        <stat_increase>0,0,0,0,0,2,0,0,0,0</stat_increase>
+        <uses>1</uses>
+        <RNG>0</RNG>
+        <value>8000</value>
+        <desc>Permanently raises Luck by 2 points.</desc>   
+    </item>
+
+
     <item name="Prim's Charm">
         <id>Prim's Charm</id>
         <spritetype>Boosters</spritetype>
@@ -1879,6 +2019,19 @@
         <status>Fade_Status</status>
     </item>
 
+    <item name="Overdrive">
+        <id>so_Overdrive</id>
+        <spritetype>Skills</spritetype>
+        <spriteid>5,9</spriteid>
+        <components>status</components>
+
+        <value>0</value>
+        <RNG>0</RNG>
+        <desc>I done broked something.</desc>
+
+        <status>overdrive_status,infinite_status</status>
+    </item>
+
     <item name="Shove">
         <id>so_Shove</id>
         <spritetype>Skills</spritetype>
@@ -1973,6 +2126,21 @@
 
         <map_hit_color>-128,0,248</map_hit_color>
         <sfx_on_hit>Rally</sfx_on_hit>
+    </item>
+
+    <item name="Reinforce">
+        <id>so_Reinforce</id>
+        <spritetype>Skills</spritetype>
+        <spriteid>9,0</spriteid>
+        <components>usable,booster,beneficial,call_item_script,exp</components>
+        <weapontype>None</weapontype>
+
+        <value>0</value>
+        <RNG>0</RNG>
+        <desc>Summons reinforcements</desc>
+        <targets>Ally</targets>
+        <LVL>--</LVL>
+        <exp>13</exp>
     </item>
 
     <item name="Summon_1">

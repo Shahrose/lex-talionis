@@ -24,6 +24,9 @@
     - 6: move towards thief escape tiles
     - 7: move towards boss unit
     - 8: move towards enemy seize tiles
+    - 9: move towards any unit
+    -10: move towards unlooted destructible ojects without HP
+    -11: move towards tiles with HP
     - A string: move towards unit whose name or event_id matches string
 # Possible States for view_range (secondary AI):
     - 0: Do not look
@@ -96,6 +99,9 @@ class AI(object):
         other_unit_positions = {unit.position for unit in gameStateObj.allunits if unit.position and unit is not self.unit}
         return valid_moves - other_unit_positions
 
+    def can_move(self):
+        return self.ai1_state & PRIMARYAI['Move']
+
     # Now a state machine
     def think(self, gameStateObj):
         success = False
@@ -113,7 +119,7 @@ class AI(object):
                 logger.debug('Starting AI with name: %s, position: %s, class: %s, AI1: %s, AI2 %s, View Range: %s', 
                              self.unit.name, self.unit.position, self.unit.klass, self.ai1_state, self.ai2_state, self.view_range)
                 self.clean_up()
-                if self.ai1_state & PRIMARYAI['Move']:
+                if self.can_move():
                     self.valid_moves = self.get_true_valid_moves(gameStateObj)
                 else:
                     self.valid_moves = {self.unit.position}                    
@@ -194,9 +200,18 @@ class AI(object):
                 elif self.ai2_state == 8:
                     self.available_targets = [tile for position, tile in gameStateObj.map.tiles.items()
                                               if 'Enemy_Seize' in gameStateObj.map.tile_info_dict[position]]
+                    self.available_targets += [unit for unit in gameStateObj.allunits if unit.position and self.unit.checkIfEnemy(unit) and 
+                                               unit.team not in self.team_ignore and unit.name not in self.name_ignore]
                 elif self.ai2_state == 9:
                     self.available_targets = [unit for unit in gameStateObj.allunits if unit.position and unit is not self.unit and
                                               unit.team not in self.team_ignore and unit.name not in self.name_ignore]
+                elif self.ai2_state == 10:
+                    self.available_targets = [tile for position, tile in gameStateObj.map.tiles.items()
+                                              if 'Destructible' in gameStateObj.map.tile_info_dict[position] and
+                                              'HP' not in gameStateObj.map.tile_info_dict[position]]
+                elif self.ai2_state == 11:
+                    self.available_targets = [tile for position, tile in gameStateObj.map.tiles.items()
+                                              if 'HP' in gameStateObj.map.tile_info_dict[position]]
                 else:
                     self.available_targets = [unit for unit in gameStateObj.allunits if unit.position and
                                               (unit.name == self.ai2_state or unit.event_id == self.ai2_state)]
@@ -254,11 +269,15 @@ class AI(object):
         # Acts only if a unit has a position to move to
         if self.position_to_move_to and self.position_to_move_to != self.unit.position:
             path = self.unit.getPath(gameStateObj, self.position_to_move_to)
-            if self.unit.hasAttacked: # If we've already attacked, we're done.
-                self.unit.wait(gameStateObj)
+            # if self.unit.hasAttacked: # If we've already attacked, we're done.
+            #     self.unit.wait(gameStateObj)
+            gameStateObj.stateMachine.changeState('wait')
             gameStateObj.stateMachine.changeState('movement')
-            Action.do(Action.Move(self.unit, self.position_to_move_to, path), gameStateObj)
+            Action.do(Action.CantoMove(self.unit, self.position_to_move_to, path), gameStateObj)
             return True
+        elif self.position_to_move_to:
+            Action.execute(Action.CantoMove(self.unit, self.position_to_move_to), gameStateObj)
+            return False
         else:
             return False
 
@@ -317,7 +336,7 @@ class AI(object):
         valid_positions = self.get_true_valid_moves(gameStateObj)
         self.position_to_move_to = Utility.farthest_away_pos(self.unit, valid_positions, gameStateObj.allunits)
 
-    def thief_to_escape(self):
+    def thief_to_escape(self, gameStateObj):
         # Change AI
         new_primary_ai = self.ai1_state
         if new_primary_ai & PRIMARYAI['Steal']:
@@ -326,7 +345,7 @@ class AI(object):
             new_primary_ai -= PRIMARYAI['Unlock']            
         if not new_primary_ai & PRIMARYAI['Thief Escape']:
             new_primary_ai += PRIMARYAI['Thief Escape']
-        self.change_ai(new_primary_ai, 6)
+        Action.do(Action.ModifyAI(self.unit, new_primary_ai, 6), gameStateObj)
 
     # === STEAL AI ===
     def run_steal_ai(self, gameStateObj, valid_moves):
@@ -347,7 +366,7 @@ class AI(object):
             # If we've stolen everything possible, escape time -- team ignore is used to set limit
             if len(self.unit.items) >= cf.CONSTANTS['max_items'] or \
                     (self.team_ignore and self.team_ignore[0].isdigit() and len(self.unit.items) >= int(self.team_ignore[0])):
-                self.thief_to_escape()  # For next time
+                self.thief_to_escape(gameStateObj)  # For next time
             return True
         return False
 
@@ -356,7 +375,7 @@ class AI(object):
         available_targets = [tile for position, tile in gameStateObj.map.tiles.items()
                              if 'Locked' in gameStateObj.map.tile_info_dict[position]]
         if not available_targets:
-            self.thief_to_escape()
+            self.thief_to_escape(gameStateObj)
             return False
 
         available_targets = sorted(available_targets, key=lambda tile: gameStateObj.map.tile_info_dict[tile.position].get('Locked'))
@@ -367,7 +386,7 @@ class AI(object):
                     num_before = len(self.unit.items) + (1 if target.name == 'Chest' else 0)
                     if num_before >= cf.CONSTANTS['max_items'] or \
                             (self.team_ignore and self.team_ignore[0].isdigit() and num_before >= int(self.team_ignore[0])):
-                        self.thief_to_escape()  # For next time
+                        self.thief_to_escape(gameStateObj)  # For next time
                     self.target_to_interact_with = target.position
                     self.position_to_move_to = move
                     return True
@@ -378,7 +397,7 @@ class AI(object):
         available_targets = [position for position, tile in gameStateObj.map.tiles.items() 
                              if 'HP' in gameStateObj.map.tile_info_dict[position]]
         avail_items = [item for item in self.unit.items if item.weapon]
-        avail_items = sorted(avail_items, key=lambda x: x.MT, reverse=True)
+        avail_items = sorted(avail_items, key=lambda x: x.weapon.MT, reverse=True)
 
         for item in avail_items:
             for position in available_targets:
@@ -454,12 +473,20 @@ class Primary_AI(object):
         self.skip_flag = False
         closest_enemy_distance = self.unit.distance_to_closest_enemy(gameStateObj)
 
-        self.items = [item for item in self.unit.items if self.unit.canWield(item) and not item.no_ai]
+        self.items = [item for item in self.unit.items if self.unit.canWield(item) and self.unit.canUse(item) and not item.no_ai]
 
         # Determine if I can skip this unit's AI
         # Remove any items that only give statuses if there are no enemies nearby
-        self.items = [i for i in self.items if not 
-                      (i.spell and i.status and i.beneficial and not i.heal and closest_enemy_distance > self.unit.stats['MOV'] + 2)]
+        view_range = 0
+        if self.unit.ai.view_range == 1:
+            view_range = self.unit.stats['MOV']*2 + self.unit.getMaxRange()
+        elif self.unit.ai.view_range == 2:
+            view_range = 100
+        elif self.unit.ai.view_range >= 3:
+            view_range = self.unit.ai.view_range
+        if closest_enemy_distance > view_range:
+            self.items = [i for i in self.items if not 
+                          (i.spell and i.status and i.beneficial and not i.heal)]
         # Remove any items that heal only me if I don't need healing
         if self.unit.currenthp >= self.unit.stats['HP']:
             self.items = [i for i in self.items if not (i.heal and max(i.get_range(self.unit)) == 0)]
@@ -504,7 +531,10 @@ class Primary_AI(object):
             return True
         if self.unit.currenthp < self.unit.stats['HP']:
             return False
-        detrimental_items = [item for item in self.unit.items if (item.weapon or (item.spell and item.detrimental)) and self.unit.canWield(item)]
+        detrimental_items = \
+            [item for item in self.unit.items if
+             (item.weapon or (item.spell and item.detrimental)) and 
+             self.unit.canWield(item) and self.unit.canUse(item)]
         if len(detrimental_items) == len(self.items):
             max_range = max(max(item.get_range(self.unit)) for item in detrimental_items) + self.unit.stats['MOV']
             if closest_enemy_distance > max_range:
@@ -721,7 +751,7 @@ class Primary_AI(object):
                 target_damage = Utility.clamp(target.compute_damage(self.unit, gameStateObj, target.getMainWeapon(), 'Defense')/float(self.unit.currenthp), 0, 1)
                 target_accuracy = Utility.clamp(target.compute_hit(self.unit, gameStateObj, target.getMainWeapon(), 'Defense')/100.0, 0, 1)
 
-            double = 1 if self.unit.outspeed(target, item, gameStateObj) else 0
+            double = 1 if self.unit.outspeed(target, item, gameStateObj, "Attack") else 0
             chance_i_kill_target_on_first = my_damage*my_accuracy if my_damage == 1 else 0
 
             if double and target_damage >= 1:
@@ -916,7 +946,7 @@ class Secondary_AI(object):
             # Find a path to target
             my_path = None
             limit = self.double_move if not self.widen_flag else None
-            my_path = self.getPath(target.position, gameStateObj, limit=limit)
+            my_path = self.get_path(target.position, gameStateObj, limit=limit)
             # We didn't find a path, or the path was longer than double move, so ignore target and continue
             if not my_path:
                 logger.debug("No valid path to %s.", target.name)
@@ -960,7 +990,7 @@ class Secondary_AI(object):
 
         return False
 
-    def getPath(self, goal_pos, gameStateObj, limit=None):
+    def get_path(self, goal_pos, gameStateObj, limit=None):
         self.pathfinder.set_goal_pos(goal_pos)
         self.pathfinder.process(gameStateObj, adj_good_enough=True, ally_block=self.ally_flag, limit=limit)
         my_path = self.pathfinder.path
@@ -985,7 +1015,7 @@ class Secondary_AI(object):
             # Mutiliply that by the chance I hit
             max_damage = 0
             status_term = 0
-            items = [item for item in self.unit.items if self.unit.canWield(item)]
+            items = [item for item in self.unit.items if self.unit.canWield(item) and self.unit.canUse(item)]
             for item in items:
                 if item.status:
                     status_term = 1
@@ -1002,5 +1032,11 @@ class Secondary_AI(object):
             terms.append((damage_term, 30))
             terms.append((weakness_term, 30))
             terms.append((status_term, 20))
+
+        # Must be moving towards a tile
+        else:
+            if 'Enemy_Seize' in gameStateObj.map.tile_info_dict[target.position]:
+                # Winning the game term
+                terms.append((10.0, 120))  # Should be worth 10x more than everything else
 
         return Utility.process_terms(terms)

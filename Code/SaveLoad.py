@@ -25,7 +25,7 @@ def load_level(levelfolder, gameStateObj, metaDataObj):
     # Assorted Files
     unitfilename = levelfolder + '/UnitLevel.txt'
 
-    unitFile = open(unitfilename, 'r')
+    unitFile = open(unitfilename, 'r', encoding='utf-8')
     unitcontent = unitFile.readlines()
     unitFile.close()
         
@@ -106,7 +106,7 @@ def get_metaDataObj(levelfolder, metaDataObj):
 
 def read_overview_file(overview_filename):
     overview_lines = {}
-    with open(overview_filename, 'r') as mainInfo:
+    with open(overview_filename, mode='r', encoding='utf-8') as mainInfo:
         for line in mainInfo:
             split_line = line.strip().split(";", 1)
             overview_lines[split_line[0]] = split_line[1]
@@ -161,11 +161,12 @@ def default_previous_classes(cur_class, classes):
     if cur_class not in ClassData.class_dict:
         raise KeyError("Cannot find %s in class_info.xml." % cur_class)
     klass = ClassData.class_dict[cur_class]
-    while klass['tier'] > len(classes) and klass['promotes_from']:
+    while klass['promotes_from']:
         prev_class = klass['promotes_from']
         if prev_class not in classes:
             classes.insert(0, prev_class)
-            cur_class = prev_class
+        cur_class = prev_class
+        klass = ClassData.class_dict[cur_class]
 
 def add_unit(unitLine, allunits, reinforceUnits, gameStateObj):
     assert len(unitLine) == 6, "unitLine %s must have length 6"%(unitLine)
@@ -192,15 +193,26 @@ def add_unit_from_legend(legend, allunits, reinforceUnits, gameStateObj):
             u_i['gender'] = int(unit.find('gender').text)
             u_i['level'] = int(unit.find('level').text)
 
+            # Tags
+            u_i['tags'] = set(unit.find('tags').text.split(',')) if unit.find('tags') is not None and unit.find('tags').text is not None else set()
+
             stats = Utility.intify_comma_list(unit.find('bases').text)
             for n in range(len(stats), cf.CONSTANTS['num_stats']):
                 stats.append(class_dict[u_i['klass']]['bases'][n])
-            if u_i['team'] == 'player' or u_i['team'] == 'other': # Modify stats
+
+            if 'IgnoreBonusStats' in u_i['tags'] or 'IgnoreBonusStats' in class_dict[u_i['klass']]['tags']:
+                mode_bases = [0] * cf.CONSTANTS['num_stats']
+            elif u_i['team'] == 'player' or u_i['team'] == 'other': # Modify stats
                 mode_bases = gameStateObj.mode['player_bases']
-                mode_growths = gameStateObj.mode['player_growths']
             else:
                 mode_bases = gameStateObj.mode.get('boss_bases', gameStateObj.mode['enemy_bases'])
+            if 'IgnoreBonusGrowths' in u_i['tags'] or 'IgnoreBonusGrowths' in class_dict[u_i['klass']]['tags']:
+                mode_growths = [0] * cf.CONSTANTS['num_stats']
+            elif u_i['team'] == 'player' or u_i['team'] == 'other': # Modify stats
+                mode_growths = gameStateObj.mode['player_growths']
+            else:
                 mode_growths = gameStateObj.mode.get('boss_growths', gameStateObj.mode['enemy_growths'])
+                
             stats = [sum(x) for x in zip(stats, mode_bases)]
             assert len(stats) == cf.CONSTANTS['num_stats'], "bases %s must be exactly %s integers long" % (stats, cf.CONSTANTS['num_stats'])
 
@@ -212,7 +224,9 @@ def add_unit_from_legend(legend, allunits, reinforceUnits, gameStateObj):
             num_levelups = u_i['level'] - 1 + (cf.CONSTANTS['promoted_level'] if class_dict[u_i['klass']]['tier'] > 1 else 0)
             stats, u_i['growth_points'] = auto_level(stats, mode_growths, num_levelups, class_dict[u_i['klass']]['max'], gameStateObj.mode)
             # Handle autolevels
-            if u_i['team'] == 'player' or u_i['team'] == 'other':
+            if 'IgnoreAutoLevels' in u_i['tags'] or 'IgnoreAutoLevels' in class_dict[u_i['klass']]['tags']:
+                num_autolevels = 0
+            elif u_i['team'] == 'player' or u_i['team'] == 'other':
                 num_autolevels = int(eval(gameStateObj.mode['autolevel_players']))
             else:
                 num_autolevels = int(eval(gameStateObj.mode.get('autolevel_bosses', '0')))
@@ -233,8 +247,6 @@ def add_unit_from_legend(legend, allunits, reinforceUnits, gameStateObj):
             assert len(u_i['wexp']) == len(Weapons.TRIANGLE.types), "%s's wexp must have as many slots as there are weapon types."%(u_i['name'])
             
             u_i['desc'] = unit.find('desc').text
-            # Tags
-            u_i['tags'] = set(unit.find('tags').text.split(',')) if unit.find('tags') is not None and unit.find('tags').text is not None else set()
 
             u_i['ai'] = legend['ai']
             u_i['movement_group'] = class_dict[u_i['klass']]['movement_group']
@@ -316,13 +328,14 @@ def create_unit_from_legend(legend, allunits, factions, reinforceUnits, gameStat
     else:
         u_i['name'] = 'Duelist'
 
+    u_i['tags'] = set()
+
     stats, u_i['growths'], u_i['growth_points'], items, u_i['wexp'], u_i['level'] = \
-        get_unit_info(u_i['team'], u_i['klass'], u_i['level'], legend['items'],
+        get_unit_info(u_i['team'], u_i['klass'], u_i['level'], u_i['tags'], legend['items'],
                       gameStateObj.mode, gameStateObj.game_constants, force_fixed=force_fixed)
     u_i['stats'] = build_stat_dict(stats)
     logger.debug("%s's stats: %s", u_i['name'], u_i['stats'])
     
-    u_i['tags'] = set()
     u_i['ai'] = legend['ai']
     u_i['movement_group'] = class_dict[u_i['klass']]['movement_group']
 
@@ -341,7 +354,7 @@ def create_unit_from_legend(legend, allunits, factions, reinforceUnits, gameStat
         cur_unit.add_item(item, gameStateObj)
 
     # Status Effects and Skills
-    get_skills(cur_unit, classes, u_i['level'], gameStateObj, feat=False)
+    get_skills(cur_unit, classes, u_i['level'], gameStateObj, feat=cf.CONSTANTS['generic_feats'])
 
     # Extra Skills
     if legend.get('status'):
@@ -379,7 +392,7 @@ def create_summon(summon_info, summoner, position, gameStateObj):
     u_i['movement_group'] = class_dict[u_i['klass']]['movement_group']
 
     stats, u_i['growths'], u_i['growth_points'], items, u_i['wexp'], u_i['level'] = \
-        get_unit_info(u_i['team'], u_i['klass'], summoner_internal_level, summon_info.item_line, gameStateObj.mode, gameStateObj.game_constants)
+        get_unit_info(u_i['team'], u_i['klass'], summoner_internal_level, u_i['tags'], summon_info.item_line, gameStateObj.mode, gameStateObj.game_constants)
     u_i['stats'] = build_stat_dict(stats)
     unit = UnitObject.UnitObject(u_i)
 
@@ -389,11 +402,11 @@ def create_summon(summon_info, summoner, position, gameStateObj):
         unit.add_item(item, gameStateObj)
 
     # Status Effects and Skills
-    get_skills(unit, classes, u_i['level'], gameStateObj, feat=False)
+    get_skills(unit, classes, u_i['level'], gameStateObj, feat=cf.CONSTANTS['generic_feats'])
 
     return unit
 
-def get_unit_info(team, klass, level, item_line, mode, game_constants, force_fixed=False):
+def get_unit_info(team, klass, level, tags, item_line, mode, game_constants, force_fixed=False):
     # Handle stats
     # hp, str, mag, skl, spd, lck, def, res, con, mov
     bases = ClassData.class_dict[klass]['bases'][:] # Using copies    
@@ -412,13 +425,26 @@ def get_unit_info(team, klass, level, item_line, mode, game_constants, force_fix
         hidden_levels = int(eval(mode['autolevel_enemies']))
         explicit_levels = int(eval(mode['truelevel_enemies']))
 
-    level += explicit_levels
+    if 'IgnoreTrueLevels' in tags or 'IgnoreTrueLevels' in ClassData.class_dict[klass]['tags']:
+        pass
+    else:
+        level += explicit_levels
 
-    bases = [sum(x) for x in zip(bases, mode_bases)]
-    growths = [sum(x) for x in zip(growths, mode_growths)]
+    if 'IgnoreBonusStats' in tags or 'IgnoreBonusStats' in ClassData.class_dict[klass]['tags']:
+        pass
+    else:
+        bases = [sum(x) for x in zip(bases, mode_bases)]
+    if 'IgnoreBonusGrowths' in tags or 'IgnoreBonusStats' in ClassData.class_dict[klass]['tags']:
+        pass
+    else:
+        growths = [sum(x) for x in zip(growths, mode_growths)]
 
     num_levelups = level - 1 + (cf.CONSTANTS['promoted_level'] if ClassData.class_dict[klass]['tier'] > 1 else 0)
-    stats, growth_points = auto_level(bases, growths, num_levelups + hidden_levels, ClassData.class_dict[klass]['max'], mode, force_fixed=force_fixed)
+    if 'IgnoreAutoLevels' in tags or 'IgnoreAutoLevels' in ClassData.class_dict[klass]['tags']:
+        pass
+    else:
+        num_levelups += hidden_levels
+    stats, growth_points = auto_level(bases, growths, num_levelups, ClassData.class_dict[klass]['max'], mode, force_fixed=force_fixed)
 
     # Handle items
     if item_line:
@@ -449,21 +475,23 @@ def get_unit_info(team, klass, level, item_line, mode, game_constants, force_fix
 
     return stats, growths, growth_points, items, wexp, level
 
-def get_skills(unit, classes, level, gameStateObj, feat=True, seed=0):
+def get_skills(unit, classes, level, gameStateObj, feat=False):
     class_skills = []
     for index, klass in enumerate(classes):
         for level_needed, class_skill in ClassData.class_dict[klass]['skills']:
             # If level is gte level needed for skill or gte max_level
-            if level >= level_needed or index < len(classes) - 1:
+            if cf.CONSTANTS['inherit_class_skills'] and index < len(classes) - 1:
+                class_skills.append(class_skill)
+            elif level >= level_needed and index == len(classes) - 1:
                 class_skills.append(class_skill)
     # === Handle Feats (Naive choice)
     if feat:
-        for status in class_skills:
+        for status in list(class_skills):
             if status == 'Feat':
-                counter = 0
-                while StatusCatalog.feat_list[(seed + counter)%len(StatusCatalog.feat_list)] in class_skills:
-                    counter += 1
-                class_skills.append(StatusCatalog.feat_list[(seed + counter)%len(StatusCatalog.feat_list)])
+                feat_list = [feat for feat in StatusCatalog.feat_list if feat not in class_skills]
+                random_number = static_random.get_growth() % len(feat_list)
+                new_skill = feat_list[random_number]
+                class_skills.append(new_skill)
     class_skills = [status for status in class_skills if status != 'Feat']
     logger.debug('Class Skills %s', class_skills)
     # === Actually add statuses

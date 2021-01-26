@@ -1,3 +1,5 @@
+import hashlib
+
 # https://en.wikipedia.org/wiki/Linear_congruential_generator
 class lcg(object):
     def __init__(self, seed=1):
@@ -42,6 +44,14 @@ class StaticRandom(object):
         
 r = StaticRandom()
 
+def strhash(s: str) -> int:
+    """
+    Converts a string to a corresponding integer
+    """
+    h = hashlib.md5(s.encode('utf-8'))
+    h = int(h.hexdigest(), base=16)
+    return h
+
 def set_seed(seed):
     r.set_seed(seed)
 
@@ -52,7 +62,8 @@ def get_growth():
     return r.growth_random.randint(0, 99)
 
 def get_levelup(u_id, lvl):
-    return lcg(hash(u_id) + lvl + r.seed)
+    superseed = strhash(u_id) + lvl + r.seed
+    return lcg(superseed)
 
 def get_combat_random_state():
     return r.combat_random.state

@@ -8,8 +8,10 @@ Because this was coded entirely from scratch, we are not bound by the limitation
 
 The Lion Throne has innovative objectives, powerful new items, custom classes, a fully functioning skill system with activated skills, a Tellius-style base menu, and much more!
 
+Visit the Discord server for more information and help: https://discord.gg/gpjcYHe
+
 # Downloads
-release v0.9.0 - 64-bit Windows only
+release v0.9.4.4 - 64-bit Windows only
 
 *Dropbox:* https://www.dropbox.com/s/1ikh26td9d68z5n/the_lion_throne.zip?dl=0
 
@@ -66,18 +68,16 @@ However, if you are familiar with Python, Pygame, and Git, read on to find out h
 
 ### Prerequisites
 
-To run the engine, you will need to download and install the following:
+You can always run the engine without downloading any addiitonal tools using the executable above instead. However, if you are **SURE** you want to run the Python version of the engine (maybe in order to do modifications of your own?), you will need to download and install the following:
 
-* [Python 2.7.x+](https://www.python.org/downloads/release/python-2712/) - Python 3.x will not work
-* [Pygame 1.9.1+](http://www.pygame.org/download.shtml) - The framework used to handle rendering and sound. If you have pip, you should try installing it with pip first: `pip install pygame`. Check this link out for more information: https://www.pygame.org/wiki/GettingStarted but remember we are working with Python 2.7.x, not Python 3.
+* [Python 3.7.x+](https://www.python.org/downloads/release/python-378/) - As of August 2019, Python 2.x will no longer work. If you want to build the engine into an executable using Pyinstaller, use Python 3.7, not Python 3.8+, since they are not supported by Pyinstaller.
+* [Pygame 1.9.6](http://www.pygame.org/download.shtml) - The framework used to handle rendering and sound. If you have pip (which makes things a lot easier for the future), you should try installing it with pip first: `pip install pygame==1.9.6`. Check this link out for more information: https://www.pygame.org/wiki/GettingStarted.
 
 ### Installing
 
-This section requires git.
-If you don't have git, install it from here: https://git-scm.com/book/en/v2/Getting-Started-Installing-Git.
+You can find more detailed instructions on installing Git, Python, Pygame, and other tools here: https://gitlab.com/rainlash/lex-talionis/-/wikis/102.-Installations. If this is your first time installing any of these tools, I highly recommend you follow the instruction in the _102.-Installations_ link above.
 
-To get the Lex Talionis engine code on your machine, create a new folder.  
-Then, in the command line or a terminal, type:
+Otherwse, to get the Lex Talionis engine code on your machine easily, in the command line or a terminal, type:
 
 ```
 git clone https://gitlab.com/rainlash/lex-talionis
@@ -85,9 +85,7 @@ git clone https://gitlab.com/rainlash/lex-talionis
 
 You will also need to download the audio files, which are not stored on Git because of their size. 
 
-On Dropbox here: https://www.dropbox.com/sh/slbz2t7v1fc6uao/AACiznGLm442qcdOAGbQtnmwa?dl=0. 
-
-On the top right of the page, click "Download", then click "Direct Download".
+On Dropbox here: https://www.dropbox.com/sh/slbz2t7v1fc6uao/AACiznGLm442qcdOAGbQtnmwa?dl=1.
 
 Once the audio files are downloaded, extract the zip file and move or copy the Audio folder to the lex-talionis directory (the directory that contains main.py).
 
@@ -98,6 +96,16 @@ python main.py
 ```
 
 A small screen should pop up on your computer, displaying the logo. Don't worry if it takes a couple of minutes the first time it is run. It is just taking the time to turn the code text into compiled bytecode.
+
+## Building/Freezing the Code
+
+In order to build the engine, you will require Python 3.7 (not Python 3.8) and PyInstaller. Python 3.8 can't be used because PyInstaller does not support it yet.
+
+```
+pyinstaller main.spec
+```
+
+to build. The folder `dist/the_lion_throne` will contain the built executable and its supporting files. Visit https://gitlab.com/rainlash/lex-talionis/-/wikis/100.-Miscellaneous-Stuff#changing-the-name-of-the-executable to see what names can and can't be changed.
 
 ## License
 
